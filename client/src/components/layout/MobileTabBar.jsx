@@ -6,6 +6,8 @@ import {
   UserPlus,
   Building2,
   ShoppingBag,
+  UserX,
+  FileX,
   Ruler,
   Factory,
   Calendar,
@@ -22,6 +24,7 @@ const PRIMARY_KEYS = ['dashboard', 'leads', 'orders', 'reminders'];
 const MODULES_INFO = [
   { key: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} /> },
   { key: 'leads', label: 'Leads', path: '/leads', icon: <UserPlus size={20} /> },
+  { key: 'lost-leads', label: 'Lost Leads', path: '/leads/lost', icon: <UserX size={20} /> },
   { key: 'customers', label: 'Customers', path: '/customers', icon: <Building2 size={20} /> },
   { key: 'orders', label: 'Orders', path: '/orders', icon: <ShoppingBag size={20} /> },
   { key: 'products', label: 'Products', path: '/products', icon: <Ruler size={20} /> },
@@ -38,7 +41,7 @@ export default function MobileTabBar() {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   const allowedModules = MODULES_INFO.filter(item => 
-    permissions[item.key]?.includes('view')
+    permissions[item.permission || item.key]?.includes('view')
   );
 
   const primaryItems = allowedModules.filter(item => PRIMARY_KEYS.includes(item.key));

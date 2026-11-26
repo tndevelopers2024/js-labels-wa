@@ -22,6 +22,8 @@ const upload = multer({
 
 const {
   getProducts,
+  getUniqueDimensions,
+  getIndustriesSummary,
   getProductById,
   createProduct,
   updateProduct,
@@ -39,6 +41,8 @@ const { allowRoles } = require('../middleware/roles');
 
 // List, Export-All, and Trash routes (must be defined BEFORE :id)
 router.get('/', protect, getProducts);
+router.get('/unique-dimensions', protect, getUniqueDimensions);
+router.get('/industries-summary', protect, getIndustriesSummary);
 router.get('/export-all', protect, exportAllProductsExcel);
 router.post('/import-excel', protect, allowRoles('super_admin'), upload.single('file'), importProductsExcel);
 router.get('/trash', protect, allowRoles('super_admin'), (req, res, next) => { req.params.resource = 'products'; next(); }, getTrash);
@@ -52,9 +56,9 @@ router.post('/:id/job-times', protect, addJobTime);
 router.patch('/:id/job-times/:timeId', protect, updateJobTime);
 router.delete('/:id/job-times/:timeId', protect, deleteJobTime);
 
-// Admin-only mutation routes
-router.post('/', protect, allowRoles('super_admin'), createProduct);
-router.patch('/:id', protect, allowRoles('super_admin'), updateProduct);
+// Product creation allowed for authenticated users who can manage orders (super_admin, manager, caller)
+router.post('/', protect, allowRoles('super_admin', 'manager', 'caller'), createProduct);
+router.patch('/:id', protect, allowRoles('super_admin', 'manager'), updateProduct);
 router.delete('/:id', protect, allowRoles('super_admin'), deleteProduct);
 router.post('/:id/restore', protect, allowRoles('super_admin'), (req, res, next) => { req.params.resource = 'products'; next(); }, restoreRecord);
 

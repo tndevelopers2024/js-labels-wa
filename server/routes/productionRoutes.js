@@ -7,7 +7,8 @@ const {
   getDimensionsList,
   getCurrentMonthProductsSold,
   exportAllProductionExcel,
-  exportProductProductionExcel
+  exportProductProductionExcel,
+  exportDimensionProductionExcel
 } = require('../controllers/productionController');
 const { protect } = require('../middleware/auth');
 
@@ -18,6 +19,7 @@ router.get('/dimensions-list', protect, getDimensionsList);
 router.get('/current-month-products', protect, getCurrentMonthProductsSold);
 router.get('/export-all', protect, exportAllProductionExcel);
 router.get('/export-product', protect, exportProductProductionExcel);
+router.get('/export-dimension', protect, exportDimensionProductionExcel);
 
 module.exports = router;
 

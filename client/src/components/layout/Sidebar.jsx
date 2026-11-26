@@ -6,6 +6,8 @@ import {
   UserPlus,
   Building2,
   ShoppingBag,
+  UserX,
+  FileX,
   Ruler,
   Factory,
   Calendar,
@@ -34,6 +36,12 @@ const NAV_ITEMS = [
     icon: <UserPlus size={20} />
   },
   {
+    key: 'lost-leads',
+    label: 'Lost Leads',
+    path: '/leads/lost',
+    icon: <UserX size={20} />
+  },
+  {
     key: 'customers',
     label: 'Customers',
     path: '/customers',
@@ -41,6 +49,7 @@ const NAV_ITEMS = [
   },
   {
     key: 'orders',
+    permission: 'orders',
     label: 'Orders',
     path: '/orders',
     icon: <ShoppingBag size={20} />
@@ -93,7 +102,7 @@ export default function Sidebar({ isCollapsed = false, toggleSidebar }) {
   const { permissions } = useAuth();
 
   const allowedNavItems = NAV_ITEMS.filter(item =>
-    permissions[item.key]?.includes('view')
+    permissions[item.permission || item.key]?.includes('view')
   );
 
   return (

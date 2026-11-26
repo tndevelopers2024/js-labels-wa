@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const {
   getLeads,
+  getLostLeads,
+  exportLostLeadsExcel,
+  reopenLostLead,
   getLeadById,
   createLead,
   updateLead,
@@ -20,8 +23,11 @@ const { allowRoles } = require('../middleware/roles');
 const { applyOwnershipScope } = require('../middleware/scope');
 
 router.get('/', protect, applyOwnershipScope('assignedTo'), getLeads);
+router.get('/lost', protect, applyOwnershipScope('assignedTo'), getLostLeads);
+router.get('/lost/export-excel', protect, applyOwnershipScope('assignedTo'), exportLostLeadsExcel);
 router.get('/trash', protect, allowRoles('super_admin'), (req, res, next) => { req.params.resource = 'leads'; next(); }, getTrash);
 router.get('/:id', protect, getLeadById);
+router.post('/:id/reopen', protect, allowRoles('super_admin', 'manager', 'caller'), reopenLostLead);
 router.post('/', protect, allowRoles('super_admin', 'manager', 'caller'), createLead);
 router.put('/:id', protect, allowRoles('super_admin', 'manager', 'caller'), updateLead);
 router.patch('/:id', protect, allowRoles('super_admin', 'manager', 'caller'), updateLead);

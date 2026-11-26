@@ -42,6 +42,7 @@ export default function FollowUps() {
       setLoading(true);
       const res = await api.get('/customers');
       const list = Array.isArray(res.data) ? res.data : (res.data?.customers || []);
+      list.sort((a, b) => (a.name || a.company || '').localeCompare(b.name || b.company || '', undefined, { sensitivity: 'base' }));
       setCustomers(list);
     } catch (err) {
       console.error('Error fetching customer follow-ups from DB:', err);

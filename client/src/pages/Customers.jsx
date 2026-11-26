@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
 import { useConfirm } from '../context/ConfirmContext';
-import { Users, Search, Trash2, ArrowRight, Phone, Mail, Building, Plus, X, ShoppingBag, Eye, FileSpreadsheet, Download, UploadCloud, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Users, Search, Trash2, ArrowRight, Phone, Mail, Building, Plus, X, ShoppingBag, Eye, FileSpreadsheet, Download, UploadCloud, CheckCircle2, AlertCircle, ArrowDownAZ, Clock } from 'lucide-react';
 import { SkeletonCustomerDirectory } from '../components/ui/Skeleton';
 import NewOrderModal from '../components/NewOrderModal';
 import Button from '../components/ui/Button';
@@ -27,6 +27,7 @@ export default function Customers() {
   const [customers, setCustomers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('alphabetical'); // 'alphabetical' (A–Z) or 'latest'
   const [exportingCustomerId, setExportingCustomerId] = useState(null);
 
   // Bulk Export & Import State
@@ -63,8 +64,14 @@ export default function Customers() {
   const fetchCustomers = async () => {
     try {
       setLoading(true);
-      const url = search ? `/customers?search=${encodeURIComponent(search)}` : '/customers';
-      const res = await api.get(url);
+      const params = {
+        limit: 1000,
+        sort: sortBy
+      };
+      if (search && search.trim()) {
+        params.search = search.trim();
+      }
+      const res = await api.get('/customers', { params });
 
       let customerList = [];
       if (Array.isArray(res.data)) {
@@ -86,9 +93,9 @@ export default function Customers() {
   useEffect(() => {
     const timer = setTimeout(() => {
       fetchCustomers();
-    }, 300);
+    }, 250);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, sortBy]);
 
   const handleAddCustomerSubmit = async (e) => {
     e.preventDefault();
@@ -247,7 +254,22 @@ export default function Customers() {
     return name.substring(0, 2).toUpperCase();
   };
 
-  const safeCustomers = Array.isArray(customers) ? customers : [];
+  const safeCustomers = useMemo(() => {
+    const list = Array.isArray(customers) ? [...customers] : [];
+    if (sortBy === 'alphabetical') {
+      return list.sort((a, b) => {
+        const nameA = (a.name || a.company || '').trim();
+        const nameB = (b.name || b.company || '').trim();
+        return nameA.localeCompare(nameB, undefined, { sensitivity: 'base' });
+      });
+    } else {
+      return list.sort((a, b) => {
+        const dateA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+        const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+        return dateB - dateA;
+      });
+    }
+  }, [customers, sortBy]);
 
   return (
     <div className="space-y-6 pb-12">
@@ -268,6 +290,36 @@ export default function Customers() {
               className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
             />
             <Search size={16} className="text-slate-400 absolute left-3 top-2.5" />
+          </div>
+
+          {/* Sorting Switcher Toggle */}
+          <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200 shrink-0">
+            <button
+              type="button"
+              onClick={() => setSortBy('alphabetical')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                sortBy === 'alphabetical'
+                  ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Sort alphabetically (A–Z) by customer name"
+            >
+              <ArrowDownAZ size={14} className={sortBy === 'alphabetical' ? 'text-blue-600' : 'text-slate-400'} />
+              <span>Alphabetical (A–Z)</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSortBy('latest')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                sortBy === 'latest'
+                  ? 'bg-white text-amber-700 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+              title="Sort by latest updated or modified customer records first"
+            >
+              <Clock size={14} className={sortBy === 'latest' ? 'text-amber-600' : 'text-slate-400'} />
+              <span>Latest Changes</span>
+            </button>
           </div>
 
           <button

@@ -17,6 +17,7 @@ import {
   Truck,
   Clock,
   XCircle,
+  FileX,
   ArrowUpDown,
   Eye,
   X,
@@ -28,7 +29,8 @@ import {
   FileSpreadsheet,
   UploadCloud,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  RotateCcw
 } from 'lucide-react';
 import { SkeletonTable } from '../components/ui/Skeleton';
 import { exportAllOrdersToExcel, exportSingleOrderToExcel } from '../utils/exportUtils';
@@ -49,13 +51,63 @@ export default function Orders() {
   const [exportingAll, setExportingAll] = useState(false);
   const [exportingOrderId, setExportingOrderId] = useState(null);
 
+  // Month & Date Filtering State
+  const [availableMonths, setAvailableMonths] = useState([]);
+  const [availableYears, setAvailableYears] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState('all'); // 'all' or 'YYYY-MM'
+  const [selectedYear, setSelectedYear] = useState('all');   // 'all' or 'YYYY'
+  const [dateFrom, setDateFrom] = useState('');              // 'YYYY-MM-DD'
+  const [dateTo, setDateTo] = useState('');                  // 'YYYY-MM-DD'
+
   // Bulk Import Invoices State
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFile, setImportFile] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
 
+  // Mark as Lost State
+  const [orderToMarkLost, setOrderToMarkLost] = useState(null);
+  const [lossReason, setLossReason] = useState('Price too high / Competitor quoted lower');
+  const [lossNotes, setLossNotes] = useState('');
+  const [isSubmittingLoss, setIsSubmittingLoss] = useState(false);
+
   const canDelete = role === 'super_admin';
+
+  const fetchAvailableMonths = async () => {
+    try {
+      const res = await api.get('/orders/available-months');
+      if (res.data) {
+        setAvailableMonths(res.data.months || []);
+        setAvailableYears(res.data.years || []);
+      }
+    } catch (err) {
+      console.error('Error fetching available order months:', err);
+    }
+  };
+
+  const handleConfirmMarkLost = async (e) => {
+    e?.preventDefault();
+    if (!orderToMarkLost) return;
+    try {
+      setIsSubmittingLoss(true);
+      await api.put(`/orders/${orderToMarkLost._id}/mark-lost`, {
+        reason: lossReason,
+        notes: lossNotes
+      });
+      notify.success(`Order "${orderToMarkLost.orderNo || 'ORD'}" marked as lost`);
+      setOrderToMarkLost(null);
+      setLossNotes('');
+      if (viewingOrder?._id === orderToMarkLost._id) {
+        setViewingOrder(null);
+      }
+      fetchOrders();
+    } catch (err) {
+      console.error('Mark as lost error:', err);
+      notify.error(err.response?.data?.message || 'Failed to mark order as lost');
+    } finally {
+      setIsSubmittingLoss(false);
+    }
+  };
 
   const handleImportSubmit = async (e) => {
     e?.preventDefault();
@@ -80,6 +132,7 @@ export default function Orders() {
       setImportResult(res.data);
       notify.success(res.data?.message || 'Invoice orders imported successfully!');
       fetchOrders();
+      fetchAvailableMonths();
     } catch (err) {
       console.error('Invoice orders import failed:', err);
       const msg = err.response?.data?.message || 'Failed to import orders from Excel file';
@@ -94,6 +147,11 @@ export default function Orders() {
       setExportingAll(true);
       await exportAllOrdersToExcel({
         status: statusFilter,
+        month: selectedMonth,
+        year: selectedYear,
+        from: dateFrom,
+        to: dateTo,
+        search: searchQuery,
         notify
       });
     } catch (err) {
@@ -116,10 +174,27 @@ export default function Orders() {
     }
   };
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (overrideParams = {}) => {
     try {
       setLoading(true);
-      const res = await api.get('/orders');
+      const params = {
+        status: overrideParams.status !== undefined ? overrideParams.status : statusFilter,
+        month: overrideParams.month !== undefined ? overrideParams.month : selectedMonth,
+        year: overrideParams.year !== undefined ? overrideParams.year : selectedYear,
+        from: overrideParams.from !== undefined ? overrideParams.from : dateFrom,
+        to: overrideParams.to !== undefined ? overrideParams.to : dateTo,
+        search: overrideParams.search !== undefined ? overrideParams.search : searchQuery
+      };
+
+      const cleanParams = {};
+      if (params.status && params.status !== 'all') cleanParams.status = params.status;
+      if (params.month && params.month !== 'all') cleanParams.month = params.month;
+      if (params.year && params.year !== 'all') cleanParams.year = params.year;
+      if (params.from) cleanParams.from = params.from;
+      if (params.to) cleanParams.to = params.to;
+      if (params.search && params.search.trim()) cleanParams.search = params.search.trim();
+
+      const res = await api.get('/orders', { params: cleanParams });
       setOrders(res.data?.orders || []);
       setSummary(res.data?.summary || null);
     } catch (err) {
@@ -133,8 +208,24 @@ export default function Orders() {
   };
 
   useEffect(() => {
-    fetchOrders();
+    fetchAvailableMonths();
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchOrders();
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [statusFilter, selectedMonth, selectedYear, dateFrom, dateTo, searchQuery]);
+
+  const handleResetFilters = () => {
+    setStatusFilter('all');
+    setSelectedMonth('all');
+    setSelectedYear('all');
+    setDateFrom('');
+    setDateTo('');
+    setSearchQuery('');
+  };
 
   const handleDeleteOrder = async (orderId, orderNo) => {
     const isConfirmed = await confirm({
@@ -195,6 +286,13 @@ export default function Orders() {
             Cancelled
           </span>
         );
+      case 'lost':
+        return (
+          <span className="px-3 py-1 bg-red-100 text-red-800 border border-red-200 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-600"></span>
+            Lost
+          </span>
+        );
       default:
         return (
           <span className="px-3 py-1 bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5">
@@ -219,7 +317,7 @@ export default function Orders() {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Order Management</h1>
-          <p className="text-slate-500 text-sm mt-1 font-normal">Track confirmed customer orders, dispatch status, and revenue</p>
+          <p className="text-slate-500 text-sm mt-1 font-normal">Track confirmed customer orders, fulfillment status, and revenue</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
@@ -237,15 +335,30 @@ export default function Orders() {
             <span>Import Invoices (.xlsx)</span>
           </button>
 
-          {/* Export All Orders Button */}
+          {/* Export to Excel Button */}
           <button
             onClick={handleExportAllOrders}
             disabled={exportingAll}
             className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-2 shadow-2xs transition cursor-pointer disabled:opacity-50"
-            title="Download complete orders register in Excel format (.xlsx)"
+            title="Export filtered orders report to Excel (.xlsx)"
           >
             <Download size={14} className={`text-slate-400 ${exportingAll ? 'animate-bounce' : ''}`} />
-            <span>{exportingAll ? 'Exporting...' : 'Export All (.xlsx)'}</span>
+            <span>{exportingAll ? 'Exporting...' : 'Export to Excel (.xlsx)'}</span>
+          </button>
+
+          {/* Lost Orders Dedicated Page Link */}
+          <button
+            onClick={() => navigate('/orders/lost')}
+            className="px-4 py-2 bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 rounded-xl text-xs font-semibold flex items-center gap-2 shadow-2xs transition cursor-pointer"
+            title="View Lost & Cancelled Orders Archive"
+          >
+            <FileX size={14} className="text-rose-600" />
+            <span>Lost Orders</span>
+            {summary?.statusCounts?.lost > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-rose-200 text-rose-800 text-[10px] font-bold">
+                {summary.statusCounts.lost}
+              </span>
+            )}
           </button>
 
           {/* New Order Button */}
@@ -259,157 +372,280 @@ export default function Orders() {
         </div>
       </div>
 
-      {/* Top 6 KPI Metric Summary Cards Row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+      {/* Top 5 KPI Metric Summary Cards Row (Dispatched removed, all clickable to dedicated pages) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
 
         {/* 1. Total Orders */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
-            <FileText size={18} />
+        <div
+          onClick={() => setStatusFilter('all')}
+          className={`bg-white p-4 rounded-2xl border ${statusFilter === 'all' ? 'border-indigo-400 ring-2 ring-indigo-500/10' : 'border-slate-200/80'} shadow-2xs flex items-center justify-between gap-3 cursor-pointer hover:border-indigo-400 hover:shadow-md transition-all group`}
+          title="Filter all orders on this dashboard"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <FileText size={18} />
+            </div>
+            <div>
+              <span className="text-[11px] font-medium text-slate-500 block leading-none">Total Orders</span>
+              <span className="text-xl font-bold text-slate-900 mt-1 block">
+                {(summary?.totalOrders ?? orders.length).toLocaleString('en-IN')}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Total Orders</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {(summary?.totalOrders ?? orders.length).toLocaleString('en-IN')}
-            </span>
-          </div>
+          <ChevronRight size={15} className="text-slate-300 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
         {/* 2. Confirmed */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-            <CheckSquare size={18} />
+        <div
+          onClick={() => navigate('/orders/confirmed')}
+          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3 cursor-pointer hover:border-blue-400 hover:shadow-md transition-all group"
+          title="Open separate Confirmed Orders page"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <CheckSquare size={18} />
+            </div>
+            <div>
+              <span className="text-[11px] font-medium text-slate-500 block leading-none">Confirmed</span>
+              <span className="text-xl font-bold text-slate-900 mt-1 block">
+                {summary?.statusCounts?.confirmed ?? orders.filter(o => o.status === 'confirmed').length}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Confirmed</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {summary?.statusCounts?.confirmed ?? orders.filter(o => o.status === 'confirmed').length}
-            </span>
-          </div>
+          <ChevronRight size={15} className="text-slate-300 group-hover:text-blue-600 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
         {/* 3. Delivered */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-            <Truck size={18} />
+        <div
+          onClick={() => navigate('/orders/delivered')}
+          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3 cursor-pointer hover:border-emerald-400 hover:shadow-md transition-all group"
+          title="Open separate Delivered Orders page"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <Truck size={18} />
+            </div>
+            <div>
+              <span className="text-[11px] font-medium text-slate-500 block leading-none">Delivered</span>
+              <span className="text-xl font-bold text-slate-900 mt-1 block">
+                {summary?.statusCounts?.delivered ?? orders.filter(o => o.status === 'delivered').length}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Delivered</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {summary?.statusCounts?.delivered ?? orders.filter(o => o.status === 'delivered').length}
-            </span>
-          </div>
+          <ChevronRight size={15} className="text-slate-300 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
-        {/* 4. Dispatched */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-            <Truck size={18} />
+        {/* 4. Pending */}
+        <div
+          onClick={() => navigate('/orders/pending')}
+          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3 cursor-pointer hover:border-purple-400 hover:shadow-md transition-all group"
+          title="Open separate Pending Orders page"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <Clock size={18} />
+            </div>
+            <div>
+              <span className="text-[11px] font-medium text-slate-500 block leading-none">Pending</span>
+              <span className="text-xl font-bold text-slate-900 mt-1 block">
+                {summary?.statusCounts?.pending ?? orders.filter(o => o.status === 'pending').length}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Dispatched</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {summary?.statusCounts?.dispatched ?? orders.filter(o => o.status === 'dispatched').length}
-            </span>
-          </div>
+          <ChevronRight size={15} className="text-slate-300 group-hover:text-purple-600 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
-        {/* 5. Pending */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0">
-            <Clock size={18} />
+        {/* 5. Cancelled */}
+        <div
+          onClick={() => navigate('/orders/cancelled')}
+          className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center justify-between gap-3 cursor-pointer hover:border-rose-400 hover:shadow-md transition-all group"
+          title="Open separate Cancelled Orders page"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
+              <XCircle size={18} />
+            </div>
+            <div>
+              <span className="text-[11px] font-medium text-slate-500 block leading-none">Cancelled</span>
+              <span className="text-xl font-bold text-slate-900 mt-1 block">
+                {summary?.statusCounts?.cancelled ?? orders.filter(o => o.status === 'cancelled').length}
+              </span>
+            </div>
           </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Pending</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {summary?.statusCounts?.pending ?? orders.filter(o => o.status === 'pending').length}
-            </span>
-          </div>
-        </div>
-
-        {/* 6. Cancelled */}
-        <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-2xs flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
-            <XCircle size={18} />
-          </div>
-          <div>
-            <span className="text-[11px] font-medium text-slate-500 block leading-none">Cancelled</span>
-            <span className="text-xl font-bold text-slate-900 mt-1 block">
-              {summary?.statusCounts?.cancelled ?? orders.filter(o => o.status === 'cancelled').length}
-            </span>
-          </div>
+          <ChevronRight size={15} className="text-slate-300 group-hover:text-rose-600 group-hover:translate-x-0.5 transition-all shrink-0" />
         </div>
 
       </div>
 
       {/* Filter & Search Controls Wrapped in CollapsibleFilterCard */}
       {(() => {
-        const filteredOrders = orders.filter((ord) => {
-          const matchesStatus = statusFilter === 'all' || ord.status === statusFilter;
-          const searchLower = searchQuery.toLowerCase();
-          const custName = (ord.customerId?.name || ord.customerName || '').toLowerCase();
-          const company = (ord.customerId?.company || ord.company || '').toLowerCase();
-          const orderNo = (ord.orderNo || `ORD-${ord._id?.slice(-6)}`).toLowerCase();
-          const exec = (ord.salesExecutive?.name || '').toLowerCase();
-          const matchesSearch = !searchQuery || custName.includes(searchLower) || company.includes(searchLower) || orderNo.includes(searchLower) || exec.includes(searchLower);
-          return matchesStatus && matchesSearch;
-        });
+        const filteredOrders = orders;
 
-        const activeCount = (statusFilter !== 'all' ? 1 : 0) + (searchQuery ? 1 : 0);
+        const activeCount =
+          (statusFilter !== 'all' ? 1 : 0) +
+          (selectedMonth !== 'all' ? 1 : 0) +
+          (selectedYear !== 'all' ? 1 : 0) +
+          (dateFrom || dateTo ? 1 : 0) +
+          (searchQuery ? 1 : 0);
 
         return (
           <>
             <CollapsibleFilterCard
               title="Order Filters & Search"
               activeCount={activeCount}
-              onClear={() => {
-                setStatusFilter('all');
-                setSearchQuery('');
-              }}
+              defaultOpen={true}
+              onClear={handleResetFilters}
             >
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                {/* Status Tabs */}
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-hide">
-                  {[
-                    { key: 'all', label: 'All Orders' },
-                    { key: 'confirmed', label: 'Confirmed' },
-                    { key: 'dispatched', label: 'Dispatched' },
-                    { key: 'delivered', label: 'Delivered' },
-                    { key: 'pending', label: 'Pending' },
-                    { key: 'cancelled', label: 'Cancelled' }
-                  ].map((tab) => (
-                    <button
-                      key={tab.key}
-                      onClick={() => setStatusFilter(tab.key)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
-                        statusFilter === tab.key
-                          ? 'bg-slate-900 text-white shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
+              <div className="space-y-3.5">
+                {/* Row 1: Month, Year, and Date Range Selectors */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                  
+                  {/* Month Dropdown */}
+                  <div className="lg:col-span-4">
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5 flex items-center gap-1.5">
+                      <Calendar size={13} className="text-red-500" />
+                      <span>Filter by Month</span>
+                    </label>
+                    <select
+                      value={selectedMonth}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedMonth(val);
+                        if (val !== 'all') {
+                          setDateFrom('');
+                          setDateTo('');
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 transition cursor-pointer"
                     >
-                      {tab.label}
-                    </button>
-                  ))}
+                      <option value="all">All Months</option>
+                      {availableMonths.map((m) => (
+                        <option key={m.key} value={m.key}>
+                          {m.label} ({m.orderCount} {m.orderCount === 1 ? 'order' : 'orders'})
+                        </option>
+                      ))}
+                      {availableMonths.length === 0 && (
+                        <option value={new Date().toISOString().slice(0, 7)}>Current Month</option>
+                      )}
+                    </select>
+                  </div>
+
+                  {/* Year Dropdown */}
+                  <div className="lg:col-span-3">
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                      Filter by Year
+                    </label>
+                    <select
+                      value={selectedYear}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedYear(val);
+                        if (val !== 'all') {
+                          setDateFrom('');
+                          setDateTo('');
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500 transition cursor-pointer"
+                    >
+                      <option value="all">All Years</option>
+                      {availableYears.map((yr) => (
+                        <option key={yr} value={yr}>
+                          {yr}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Date Range: From & To */}
+                  <div className="lg:col-span-5">
+                    <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider mb-1.5">
+                      Custom Date Range
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => {
+                          setDateFrom(e.target.value);
+                          setSelectedMonth('all');
+                          setSelectedYear('all');
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                        title="Start Date"
+                      />
+                      <span className="text-xs text-slate-400 font-medium shrink-0">to</span>
+                      <input
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => {
+                          setDateTo(e.target.value);
+                          setSelectedMonth('all');
+                          setSelectedYear('all');
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                        title="End Date"
+                      />
+                    </div>
+                  </div>
                 </div>
 
-                {/* Search Input */}
-                <div className="relative min-w-[220px]">
-                  <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search order ID, customer, executive..."
-                    className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
-                  />
-                  {searchQuery && (
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
-                    >
-                      <X size={14} />
-                    </button>
-                  )}
+                {/* Row 2: Status Tabs and Search */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2.5 border-t border-slate-100">
+                  {/* Status Tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-hide">
+                    {[
+                      { key: 'all', label: 'All Orders' },
+                      { key: 'confirmed', label: 'Confirmed' },
+                      { key: 'delivered', label: 'Delivered' },
+                      { key: 'pending', label: 'Pending' },
+                      { key: 'cancelled', label: 'Cancelled' },
+                      { key: 'lost', label: 'Lost' }
+                    ].map((tab) => (
+                      <button
+                        key={tab.key}
+                        onClick={() => setStatusFilter(tab.key)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${statusFilter === tab.key
+                          ? 'bg-slate-900 text-white shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          }`}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search Input & Reset Button */}
+                  <div className="flex items-center gap-2">
+                    <div className="relative min-w-[240px]">
+                      <Search size={15} className="absolute left-3 top-2.5 text-slate-400" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search order ID, customer, executive..."
+                        className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500"
+                      />
+                      {searchQuery && (
+                        <button
+                          onClick={() => setSearchQuery('')}
+                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+
+                    {activeCount > 0 && (
+                      <button
+                        onClick={handleResetFilters}
+                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold rounded-xl border border-rose-200 transition shrink-0 cursor-pointer flex items-center gap-1"
+                        title="Clear all active filters"
+                      >
+                        <RotateCcw size={13} />
+                        <span className="hidden sm:inline">Reset</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             </CollapsibleFilterCard>
@@ -535,6 +771,18 @@ export default function Orders() {
                                   >
                                     <Download size={14} className={exportingOrderId === ord._id ? 'animate-bounce' : ''} />
                                   </button>
+                                  {ord.status !== 'lost' && ord.status !== 'cancelled' && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOrderToMarkLost(ord);
+                                      }}
+                                      className="w-8 h-8 rounded-lg border border-rose-200 flex items-center justify-center text-rose-600 hover:text-rose-800 hover:bg-rose-50 transition cursor-pointer"
+                                      title="Mark Order as Lost"
+                                    >
+                                      <FileX size={14} />
+                                    </button>
+                                  )}
                                 </div>
                               </td>
                             </tr>
@@ -639,6 +887,20 @@ export default function Orders() {
                             <Download size={13} className={exportingOrderId === ord._id ? 'animate-bounce' : ''} />
                             <span>Export</span>
                           </button>
+                          {ord.status !== 'lost' && ord.status !== 'cancelled' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOrderToMarkLost(ord);
+                              }}
+                              className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold transition cursor-pointer flex items-center gap-1.5"
+                              title="Mark Order as Lost"
+                            >
+                              <FileX size={13} />
+                              <span>Mark Lost</span>
+                            </button>
+                          )}
                           {ord.customerId?._id && (
                             <button
                               type="button"
@@ -666,7 +928,7 @@ export default function Orders() {
       {viewingOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white max-w-lg w-full rounded-2xl p-6 shadow-2xl border border-slate-200 space-y-4 max-h-[90vh] overflow-y-auto scrollbar-hide font-sans">
-            
+
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
@@ -679,7 +941,7 @@ export default function Orders() {
             </div>
 
             <div className="space-y-4 text-xs">
-              
+
               {/* Customer Account Info */}
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl flex items-center justify-between">
                 <div>
@@ -805,7 +1067,7 @@ export default function Orders() {
               )}
             </div>
 
-            <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+            <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
               <button
                 type="button"
                 onClick={() => handleExportSingleOrder(viewingOrder)}
@@ -816,13 +1078,29 @@ export default function Orders() {
                 <Download size={14} className={exportingOrderId === viewingOrder._id ? 'animate-bounce' : ''} />
                 <span>{exportingOrderId === viewingOrder._id ? 'Exporting...' : 'Export Order (.xlsx)'}</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setViewingOrder(null)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition"
-              >
-                Close
-              </button>
+
+              <div className="flex items-center gap-2">
+                {viewingOrder.status !== 'lost' && viewingOrder.status !== 'cancelled' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOrderToMarkLost(viewingOrder);
+                    }}
+                    className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition"
+                    title="Mark Order as Lost"
+                  >
+                    <FileX size={14} />
+                    <span>Mark as Lost</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setViewingOrder(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -967,6 +1245,100 @@ export default function Orders() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Mark Order as Lost Modal */}
+      {orderToMarkLost && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200/80 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <FileX size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Mark Order as Lost</h3>
+                  <p className="text-[11px] text-slate-500">
+                    Order: <span className="font-semibold text-slate-800">{orderToMarkLost.orderNo || `ORD-${orderToMarkLost._id?.slice(-6)}`}</span>
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setOrderToMarkLost(null);
+                  setLossNotes('');
+                }}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmMarkLost} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1.5">
+                  Primary Reason for Loss <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={lossReason}
+                  onChange={(e) => setLossReason(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-medium focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 cursor-pointer"
+                >
+                  <option value="Price too high / Competitor quoted lower">Price too high / Competitor quoted lower</option>
+                  <option value="Lead time / Delivery timeline issue">Lead time / Delivery timeline issue</option>
+                  <option value="Customer postponed/cancelled project">Customer postponed/cancelled project</option>
+                  <option value="Quality / Specification mismatch">Quality / Specification mismatch</option>
+                  <option value="Credit / Payment terms disagreement">Credit / Payment terms disagreement</option>
+                  <option value="Customer unresponsive / Ghosted">Customer unresponsive / Ghosted</option>
+                  <option value="Sample rejected">Sample rejected</option>
+                  <option value="Other">Other reason</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 font-semibold mb-1.5">
+                  Detailed Notes / Feedback (Optional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={lossNotes}
+                  onChange={(e) => setLossNotes(e.target.value)}
+                  placeholder="Provide any feedback or specifics heard from the client..."
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 font-normal focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500 resize-none"
+                />
+              </div>
+
+              <div className="p-3 bg-amber-50 border border-amber-200/60 rounded-xl flex items-start gap-2 text-amber-800 text-[11px] leading-relaxed">
+                <AlertCircle size={15} className="shrink-0 mt-0.5 text-amber-600" />
+                <span>
+                  This order will be moved to the dedicated <strong>Lost Orders</strong> register. You can review or restore it at any time from the Lost Orders page.
+                </span>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  disabled={isSubmittingLoss}
+                  onClick={() => {
+                    setOrderToMarkLost(null);
+                    setLossNotes('');
+                  }}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-semibold cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <LoadingButton
+                  type="submit"
+                  loading={isSubmittingLoss}
+                  loadingText="Marking..."
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl font-semibold shadow-2xs cursor-pointer disabled:opacity-50"
+                >
+                  Confirm as Lost
+                </LoadingButton>
+              </div>
+            </form>
           </div>
         </div>
       )}

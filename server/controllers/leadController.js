@@ -2,6 +2,7 @@ const Lead = require('../models/Lead');
 const Activity = require('../models/Activity');
 const User = require('../models/User');
 const FollowUp = require('../models/FollowUp');
+const ExcelJS = require('exceljs');
 
 // GET /api/leads
 const getLeads = async (req, res) => {
@@ -851,8 +852,407 @@ const deleteFollowUpNote = async (req, res) => {
   }
 };
 
+// GET /api/leads/lost
+const getLostLeads = async (req, res) => {
+  try {
+    const {
+      search,
+      reason,
+      from,
+      to,
+      salesExecutive,
+      source,
+      priority,
+      sortBy = 'lostAt_desc',
+      page = 1,
+      limit = 50
+    } = req.query;
+
+    const baseFilter = {
+      ...req.scopeFilter,
+      status: { $in: ['cancelled', 'order_lost', 'order-lost'] }
+    };
+
+    const allScopeLostLeads = await Lead.find(baseFilter)
+      .populate('assignedTo', 'name email avatarUrl role phone')
+      .populate('createdBy', 'name email avatarUrl role')
+      .populate('followUpNotesList.createdBy', 'name email avatarUrl role')
+      .populate('rescheduleHistory.rescheduledBy', 'name email avatarUrl role')
+      .lean();
+
+    // Summary calculations across scope
+    const reasonCounts = {};
+    const sourceCounts = {};
+    let highPriorityCount = 0;
+
+    allScopeLostLeads.forEach(lead => {
+      const r = (lead.cancelReason || '').trim() || 'Unspecified Reason';
+      reasonCounts[r] = (reasonCounts[r] || 0) + 1;
+
+      const s = lead.source || 'Direct / Unspecified';
+      sourceCounts[s] = (sourceCounts[s] || 0) + 1;
+
+      if (lead.priority === 'high') {
+        highPriorityCount++;
+      }
+    });
+
+    const reasonBreakdown = Object.entries(reasonCounts)
+      .map(([reasonText, count]) => ({ reason: reasonText, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const sourceBreakdown = Object.entries(sourceCounts)
+      .map(([src, count]) => ({ source: src, count }))
+      .sort((a, b) => b.count - a.count);
+
+    // Filter matching
+    let matchedLeads = allScopeLostLeads;
+
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      const cleanPhone = q.replace(/\D/g, '');
+      matchedLeads = matchedLeads.filter(lead => {
+        const name = (lead.name || '').toLowerCase();
+        const company = (lead.company || '').toLowerCase();
+        const phone = (lead.phone || '').toLowerCase();
+        const email = (lead.email || '').toLowerCase();
+        const city = (lead.city || '').toLowerCase();
+        const address = (lead.address || '').toLowerCase();
+        const rep = (lead.assignedTo?.name || '').toLowerCase();
+        const reasonText = (lead.cancelReason || '').toLowerCase();
+        const hasMatchingNote = (lead.followUpNotesList || []).some(n =>
+          (n.content || '').toLowerCase().includes(q)
+        );
+
+        return (
+          name.includes(q) ||
+          company.includes(q) ||
+          phone.includes(q) ||
+          (cleanPhone && phone.includes(cleanPhone)) ||
+          email.includes(q) ||
+          city.includes(q) ||
+          address.includes(q) ||
+          rep.includes(q) ||
+          reasonText.includes(q) ||
+          hasMatchingNote
+        );
+      });
+    }
+
+    if (reason && reason !== 'all') {
+      const rLower = reason.toLowerCase().trim();
+      matchedLeads = matchedLeads.filter(lead =>
+        (lead.cancelReason || '').toLowerCase().includes(rLower)
+      );
+    }
+
+    if (salesExecutive && salesExecutive !== 'all') {
+      matchedLeads = matchedLeads.filter(lead => {
+        const execId = lead.assignedTo?._id?.toString() || lead.assignedTo?.toString();
+        return execId === salesExecutive;
+      });
+    }
+
+    if (source && source !== 'all') {
+      matchedLeads = matchedLeads.filter(lead => lead.source === source);
+    }
+
+    if (priority && priority !== 'all') {
+      matchedLeads = matchedLeads.filter(lead => lead.priority === priority);
+    }
+
+    if (from || to) {
+      const fDate = from ? new Date(from) : null;
+      const tDate = to ? new Date(to) : null;
+      matchedLeads = matchedLeads.filter(lead => {
+        const d = lead.updatedAt ? new Date(lead.updatedAt) : new Date(lead.createdAt);
+        if (fDate && d < fDate) return false;
+        if (tDate && d > tDate) return false;
+        return true;
+      });
+    }
+
+    // Sort
+    matchedLeads.sort((a, b) => {
+      const getDate = (item) => (item.updatedAt ? new Date(item.updatedAt).getTime() : new Date(item.createdAt).getTime());
+      if (sortBy === 'lostAt_asc') return getDate(a) - getDate(b);
+      if (sortBy === 'name_asc') return (a.name || '').localeCompare(b.name || '');
+      if (sortBy === 'name_desc') return (b.name || '').localeCompare(a.name || '');
+      if (sortBy === 'priority_desc') {
+        const weight = { high: 3, medium: 2, low: 1 };
+        return (weight[b.priority] || 0) - (weight[a.priority] || 0);
+      }
+      // Default: lostAt_desc
+      return getDate(b) - getDate(a);
+    });
+
+    const totalFiltered = matchedLeads.length;
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 50;
+    const skip = (pageNum - 1) * limitNum;
+    const paginatedLeads = matchedLeads.slice(skip, skip + limitNum);
+
+    return res.json({
+      leads: paginatedLeads,
+      total: totalFiltered,
+      page: pageNum,
+      totalPages: Math.ceil(totalFiltered / limitNum) || 1,
+      summary: {
+        totalLostLeads: allScopeLostLeads.length,
+        highPriorityCount,
+        topReason: reasonBreakdown[0]?.reason || 'None',
+        topSource: sourceBreakdown[0]?.source || 'None',
+        reasonBreakdown,
+        sourceBreakdown,
+        filteredCount: totalFiltered
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching lost leads:', error);
+    return res.status(500).json({ message: 'Server error fetching lost leads' });
+  }
+};
+
+// GET /api/leads/lost/export-excel
+const exportLostLeadsExcel = async (req, res) => {
+  try {
+    const { search, reason, from, to, salesExecutive, source, priority } = req.query;
+
+    const leads = await Lead.find({
+      ...req.scopeFilter,
+      status: { $in: ['cancelled', 'order_lost', 'order-lost'] }
+    })
+      .populate('assignedTo', 'name email phone')
+      .populate('createdBy', 'name email')
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    let filtered = leads;
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      filtered = filtered.filter(l =>
+        (l.name || '').toLowerCase().includes(q) ||
+        (l.company || '').toLowerCase().includes(q) ||
+        (l.phone || '').toLowerCase().includes(q) ||
+        (l.email || '').toLowerCase().includes(q) ||
+        (l.cancelReason || '').toLowerCase().includes(q)
+      );
+    }
+    if (reason && reason !== 'all') {
+      filtered = filtered.filter(l => (l.cancelReason || '').toLowerCase().includes(reason.toLowerCase().trim()));
+    }
+    if (salesExecutive && salesExecutive !== 'all') {
+      filtered = filtered.filter(l => (l.assignedTo?._id?.toString() || l.assignedTo?.toString()) === salesExecutive);
+    }
+    if (source && source !== 'all') {
+      filtered = filtered.filter(l => l.source === source);
+    }
+    if (priority && priority !== 'all') {
+      filtered = filtered.filter(l => l.priority === priority);
+    }
+    if (from || to) {
+      const fDate = from ? new Date(from) : null;
+      const tDate = to ? new Date(to) : null;
+      filtered = filtered.filter(l => {
+        const d = l.updatedAt ? new Date(l.updatedAt) : new Date(l.createdAt);
+        if (fDate && d < fDate) return false;
+        if (tDate && d > tDate) return false;
+        return true;
+      });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'JS Labels CRM';
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet('Lost Leads Register', {
+      views: [{ showGridLines: true }]
+    });
+
+    // Title banner
+    sheet.mergeCells('A1:L1');
+    const titleCell = sheet.getCell('A1');
+    titleCell.value = 'JS LABELS - LOST LEADS AUDIT REGISTER';
+    titleCell.font = { name: 'Calibri', size: 14, bold: true, color: { argb: 'FFFFFFFF' } };
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE11D48' } };
+    titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
+    sheet.getRow(1).height = 36;
+
+    // Subtitle
+    sheet.mergeCells('A2:L2');
+    const subCell = sheet.getCell('A2');
+    subCell.value = `Generated: ${new Date().toLocaleString('en-IN')} | Total Records: ${filtered.length} | Exported By: ${req.user.name || 'System'}`;
+    subCell.font = { name: 'Calibri', size: 9, italic: true, color: { argb: 'FF475569' } };
+    subCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+    subCell.alignment = { vertical: 'middle', horizontal: 'left', indent: 1 };
+    sheet.getRow(2).height = 20;
+
+    sheet.addRow([]);
+
+    const headers = [
+      'S.No',
+      'Lead Name',
+      'Company Name',
+      'Phone Number',
+      'Email Address',
+      'Source',
+      'Priority',
+      'City',
+      'Assigned Sales Rep',
+      'Created Date',
+      'Marked as Lost (Date & Time)',
+      'Reason for Loss / Cancellation'
+    ];
+
+    const headerRow = sheet.addRow(headers);
+    headerRow.height = 26;
+    headerRow.eachCell((cell) => {
+      cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    });
+
+    filtered.forEach((lead, idx) => {
+      const lostDateObj = lead.updatedAt ? new Date(lead.updatedAt) : new Date(lead.createdAt);
+      const lostDateFormatted = lostDateObj.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      }) + ', ' + lostDateObj.toLocaleTimeString('en-IN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+
+      const createdDateFormatted = lead.createdAt ? new Date(lead.createdAt).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric'
+      }) : '—';
+
+      const row = sheet.addRow([
+        idx + 1,
+        lead.name || '—',
+        lead.company || '—',
+        lead.phone || '—',
+        lead.email || '—',
+        lead.source || '—',
+        (lead.priority || 'medium').toUpperCase(),
+        lead.city || '—',
+        lead.assignedTo?.name || 'Unassigned',
+        createdDateFormatted,
+        lostDateFormatted,
+        (lead.cancelReason || 'Unspecified').trim()
+      ]);
+
+      row.height = 22;
+      row.eachCell((cell, colNumber) => {
+        cell.font = { name: 'Calibri', size: 9 };
+        cell.alignment = { vertical: 'middle', horizontal: [1, 7].includes(colNumber) ? 'center' : 'left' };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          bottom: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          left: { style: 'thin', color: { argb: 'FFE2E8F0' } },
+          right: { style: 'thin', color: { argb: 'FFE2E8F0' } }
+        };
+      });
+    });
+
+    sheet.columns = [
+      { width: 6 },   // S.No
+      { width: 22 },  // Lead Name
+      { width: 24 },  // Company
+      { width: 16 },  // Phone
+      { width: 24 },  // Email
+      { width: 16 },  // Source
+      { width: 12 },  // Priority
+      { width: 16 },  // City
+      { width: 22 },  // Assigned Rep
+      { width: 14 },  // Created Date
+      { width: 26 },  // Marked Lost Date & Time
+      { width: 35 }   // Reason
+    ];
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="JS_Labels_Lost_Leads_${new Date().toISOString().split('T')[0]}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+    return res.end();
+  } catch (error) {
+    console.error('Error exporting lost leads Excel:', error);
+    return res.status(500).json({ message: 'Server error exporting lost leads Excel' });
+  }
+};
+
+// POST /api/leads/:id/reopen
+const reopenLostLead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newStatus = 'contacted', notes, nextFollowUpDate } = req.body;
+
+    const lead = await Lead.findById(id);
+    if (!lead) {
+      return res.status(404).json({ message: 'Lead not found' });
+    }
+
+    const validNewStatuses = ['new', 'contacted', 'follow_up'];
+    if (!validNewStatuses.includes(newStatus)) {
+      return res.status(400).json({ message: 'Invalid restore stage for lead' });
+    }
+
+    const previousReason = lead.cancelReason;
+    lead.status = newStatus;
+    lead.cancelReason = undefined;
+
+    if (nextFollowUpDate) {
+      lead.nextFollowUpDate = new Date(nextFollowUpDate);
+    }
+
+    const remarkText = notes && notes.trim()
+      ? `Lead Reopened from Order-Lost: ${notes.trim()}`
+      : `Lead Reopened from Order-Lost (Previous reason: ${previousReason || 'N/A'})`;
+
+    lead.followUpNotesList.push({
+      content: remarkText,
+      createdBy: req.user.id,
+      createdAt: new Date()
+    });
+
+    await lead.save();
+
+    await Activity.create({
+      relatedType: 'lead',
+      relatedId: lead._id,
+      action: 'status_change',
+      description: `Reopened lost lead to '${newStatus}'. ${notes ? `Remarks: ${notes}` : ''}`,
+      createdBy: req.user.id
+    });
+
+    const populatedLead = await Lead.findById(lead._id)
+      .populate('assignedTo', 'name email avatarUrl role')
+      .populate('createdBy', 'name email avatarUrl role');
+
+    return res.json({
+      message: 'Lead reopened successfully and restored to active pipeline',
+      lead: populatedLead
+    });
+  } catch (error) {
+    console.error('Error reopening lost lead:', error);
+    return res.status(500).json({ message: 'Server error reopening lost lead' });
+  }
+};
+
 module.exports = {
   getLeads,
+  getLostLeads,
+  exportLostLeadsExcel,
+  reopenLostLead,
   getLeadById,
   createLead,
   updateLead,

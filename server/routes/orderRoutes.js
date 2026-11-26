@@ -22,7 +22,12 @@ const upload = multer({
 
 const {
   getOrders,
+  getAvailableOrderMonths,
   getOrdersSummary,
+  getLostOrders,
+  markOrderAsLost,
+  reopenLostOrder,
+  exportLostOrdersExcel,
   createOrder,
   updateOrder,
   updateOrderStatus,
@@ -37,11 +42,18 @@ const { allowRoles } = require('../middleware/roles');
 const { applyOwnershipScope } = require('../middleware/scope');
 
 router.get('/', protect, applyOwnershipScope('salesExecutive'), getOrders);
+router.get('/available-months', protect, applyOwnershipScope('salesExecutive'), getAvailableOrderMonths);
+router.get('/lost', protect, applyOwnershipScope('salesExecutive'), getLostOrders);
+router.get('/lost/export-excel', protect, applyOwnershipScope('salesExecutive'), exportLostOrdersExcel);
 router.get('/export-all', protect, applyOwnershipScope('salesExecutive'), exportAllOrdersExcel);
 router.post('/import-excel', protect, allowRoles('super_admin', 'manager'), upload.single('file'), importOrdersExcel);
 router.get('/trash', protect, allowRoles('super_admin'), (req, res, next) => { req.params.resource = 'orders'; next(); }, getTrash);
 router.get('/summary', protect, applyOwnershipScope('salesExecutive'), getOrdersSummary);
 router.get('/:id/export-excel', protect, exportSingleOrderExcel);
+router.put('/:id/mark-lost', protect, markOrderAsLost);
+router.patch('/:id/mark-lost', protect, markOrderAsLost);
+router.put('/:id/reopen', protect, reopenLostOrder);
+router.patch('/:id/reopen', protect, reopenLostOrder);
 router.post('/', protect, createOrder);
 router.patch('/:id', protect, updateOrder);
 router.patch('/:id/status', protect, updateOrderStatus);

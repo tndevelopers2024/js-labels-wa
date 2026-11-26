@@ -14,8 +14,14 @@ import FollowUpDetails from './pages/FollowUpDetails';
 import Customers from './pages/Customers';
 import CustomerDetails from './pages/CustomerDetails';
 import Orders from './pages/Orders';
+import StatusOrders from './pages/StatusOrders';
+import LostOrders from './pages/LostOrders';
+import LostLeads from './pages/LostLeads';
 import Products from './pages/Products';
+import UniqueDimensions from './pages/UniqueDimensions';
+import ProductIndustries from './pages/ProductIndustries';
 import Production from './pages/Production';
+import ProductionDimensionDetails from './pages/ProductionDimensionDetails';
 import FollowUps from './pages/FollowUps';
 import Reminders from './pages/Reminders';
 import Reports from './pages/Reports';
@@ -72,6 +78,20 @@ export default function App() {
                 />
 
                 <Route
+                  path="/leads/lost"
+                  element={
+                    <RoleGuard module="leads">
+                      <LostLeads />
+                    </RoleGuard>
+                  }
+                />
+
+                <Route
+                  path="/lost-leads"
+                  element={<Navigate to="/leads/lost" replace />}
+                />
+
+                <Route
                   path="/leads/:id/followup"
                   element={
                     <RoleGuard module="leads">
@@ -107,6 +127,54 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="/orders/confirmed"
+                  element={
+                    <RoleGuard module="orders">
+                      <StatusOrders status="confirmed" />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/orders/delivered"
+                  element={
+                    <RoleGuard module="orders">
+                      <StatusOrders status="delivered" />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/orders/pending"
+                  element={
+                    <RoleGuard module="orders">
+                      <StatusOrders status="pending" />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/orders/cancelled"
+                  element={
+                    <RoleGuard module="orders">
+                      <StatusOrders status="cancelled" />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/orders/status/:status"
+                  element={
+                    <RoleGuard module="orders">
+                      <StatusOrders />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/orders/lost"
+                  element={<Navigate to="/leads/lost" replace />}
+                />
+                <Route
+                  path="/lost-orders"
+                  element={<Navigate to="/leads/lost" replace />}
+                />
+                <Route
                   path="/products"
                   element={
                     <RoleGuard module="products">
@@ -115,10 +183,50 @@ export default function App() {
                   }
                 />
                 <Route
+                  path="/products/dimensions"
+                  element={
+                    <RoleGuard module="products">
+                      <UniqueDimensions />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/products/industries"
+                  element={
+                    <RoleGuard module="products">
+                      <ProductIndustries />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/unique-dimensions"
+                  element={<Navigate to="/products/dimensions" replace />}
+                />
+                <Route
+                  path="/industries"
+                  element={<Navigate to="/products/industries" replace />}
+                />
+                <Route
                   path="/production"
                   element={
                     <RoleGuard module="production">
                       <Production />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/production/dimension/:dimensionKey"
+                  element={
+                    <RoleGuard module="production">
+                      <ProductionDimensionDetails />
+                    </RoleGuard>
+                  }
+                />
+                <Route
+                  path="/production/dimensions/:dimensionKey"
+                  element={
+                    <RoleGuard module="production">
+                      <ProductionDimensionDetails />
                     </RoleGuard>
                   }
                 />

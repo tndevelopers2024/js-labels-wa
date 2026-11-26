@@ -37,7 +37,7 @@ const syncWonLeadsToCustomers = async () => {
 const getCustomers = async (req, res) => {
   try {
     await syncWonLeadsToCustomers();
-    const { search, page = 1, limit = 50 } = req.query;
+    const { search, page = 1, limit = 1000, sort = 'alphabetical' } = req.query;
 
     let queryFilter = { ...req.scopeFilter };
 
@@ -57,22 +57,35 @@ const getCustomers = async (req, res) => {
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const isLatest = sort === 'latest' || sort === 'recent';
+    const sortOption = isLatest
+      ? { updatedAt: -1, createdAt: -1 }
+      : { name: 1, company: 1, createdAt: -1 };
+
+    const limitNum = parseInt(limit, 10) || 1000;
+    const pageNum = parseInt(page, 10) || 1;
+    const skip = (pageNum - 1) * limitNum;
+
+    let customerQuery = Customer.find(queryFilter)
+      .populate('salesExecutive', 'name email avatarUrl role');
+
+    if (!isLatest) {
+      customerQuery = customerQuery.collation({ locale: 'en', strength: 2 });
+    }
 
     const [customers, total] = await Promise.all([
-      Customer.find(queryFilter)
-        .populate('salesExecutive', 'name email avatarUrl role')
-        .sort({ updatedAt: -1 })
+      customerQuery
+        .sort(sortOption)
         .skip(skip)
-        .limit(parseInt(limit)),
+        .limit(limitNum),
       Customer.countDocuments(queryFilter)
     ]);
 
     return res.json({
       customers,
       total,
-      page: parseInt(page),
-      pages: Math.ceil(total / parseInt(limit))
+      page: pageNum,
+      pages: Math.ceil(total / limitNum) || 1
     });
   } catch (error) {
     console.error('Error fetching customers:', error);
@@ -881,7 +894,7 @@ const exportCustomerExcel = async (req, res) => {
       'Order Date',
       'Order Status',
       'Product / Item Name',
-      'Job Name',
+      'Label Name',
       'Material',
       'Colour',
       'Dimensions (WxH mm)',

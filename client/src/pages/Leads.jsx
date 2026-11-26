@@ -13,6 +13,7 @@ import {
   Kanban,
   LayoutGrid,
   Plus,
+  UserX,
   Search,
   ArrowRight,
   Trash2,
@@ -946,6 +947,16 @@ export default function Leads() {
                   <SlidersHorizontal size={14} className="text-slate-500" />
                   <span>More Filters</span>
                 </button>
+
+                {/* Lost Leads Page Link */}
+                <Link
+                  to="/leads/lost"
+                  className="px-3.5 py-2 bg-rose-50 border border-rose-200/90 hover:bg-rose-100 text-rose-700 rounded-xl text-xs font-semibold transition shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                  title="View all lost leads and cancellation reasons in a dedicated page"
+                >
+                  <UserX size={14} className="text-rose-600" />
+                  <span>Lost Leads</span>
+                </Link>
 
                 {/* Add Lead Red Button */}
                 {canCreate && (

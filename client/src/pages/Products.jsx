@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuth } from '../context/AuthContext';
 import { useNotification } from '../context/NotificationContext';
@@ -14,6 +15,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock,
+  ArrowDownAZ,
   Briefcase,
   Palette,
   Tag,
@@ -31,24 +33,8 @@ import SelectOrCreate from '../components/ui/SelectOrCreate';
 import ProductDetailsModal from '../components/ProductDetailsModal';
 import { exportProductToExcel, exportAllProductsToExcel } from '../utils/exportUtils';
 
-const PRESET_CATEGORIES = [
-  'BOPP',
-  'Barcode',
-  'Thermal Paper',
-  'Transparent',
-  'Chromo Paper',
-  'Security Film',
-  'Matte Paper',
-  'Glossy Paper',
-  'Polyester Film',
-  'Pharma',
-  'FMCG',
-  'Cosmetics',
-  'Logistics',
-  'Food & Beverage',
-  'Industrial',
-  'General'
-];
+// No hardcoded categories/industries — dynamic from database & user entries
+const PRESET_CATEGORIES = [];
 
 const PRESET_JOB_NAMES = [
   'Standard Barcode',
@@ -97,6 +83,7 @@ const PRESET_USAGE_CYCLES = [
 ];
 
 export default function Products() {
+  const navigate = useNavigate();
   const { role, permissions } = useAuth();
   const notify = useNotification();
   const confirm = useConfirm();
@@ -172,6 +159,7 @@ export default function Products() {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [unitFilter, setUnitFilter] = useState('');
+  const [sortBy, setSortBy] = useState('alphabetical'); // 'alphabetical' (A–Z) or 'latest'
 
   // Bulk Export & Import State
   const [isExportingAll, setIsExportingAll] = useState(false);
@@ -435,6 +423,7 @@ export default function Products() {
       if (categoryFilter) params.category = categoryFilter;
       if (statusFilter) params.status = statusFilter;
       if (unitFilter) params.unit = unitFilter;
+      if (sortBy) params.sort = sortBy;
 
       const res = await api.get('/products', { params });
 
@@ -467,7 +456,7 @@ export default function Products() {
       fetchProducts();
     }, 250);
     return () => clearTimeout(timer);
-  }, [search, categoryFilter, statusFilter, unitFilter, page]);
+  }, [search, categoryFilter, statusFilter, unitFilter, sortBy, page]);
 
   // Reset page to 1 when filters change
   const handleFilterChange = (setter, val) => {
@@ -795,7 +784,8 @@ export default function Products() {
       </div>
 
       {/* Stats Summary Bar */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        {/* Total Listed */}
         <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
@@ -808,44 +798,52 @@ export default function Products() {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
+        {/* Unique Dimensions - Clickable */}
+        <div
+          onClick={() => navigate('/products/dimensions')}
+          className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs hover:border-indigo-400 hover:shadow-md transition-all cursor-pointer group flex items-center justify-between active:scale-[0.99]"
+          title="Click to view all unique dimensions and specifications"
+        >
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Active Status
-            </p>
-            <p className="text-xl sm:text-2xl font-bold text-emerald-600 mt-0.5">
-              {stats.activeCount}
-            </p>
-          </div>
-          <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600">
-            <CheckCircle2 size={18} />
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Unique Dimensions
-            </p>
-            <p className="text-xl sm:text-2xl font-bold text-indigo-600 mt-0.5">
-              {stats.uniqueDims}
+            <div className="flex items-center gap-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-indigo-600 transition">
+                Unique Dimensions
+              </p>
+              <span className="text-[10px] text-indigo-500 font-bold opacity-0 group-hover:opacity-100 transition flex items-center">
+                Explore &rarr;
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-bold text-indigo-600 mt-0.5 flex items-center gap-2">
+              <span>{stats.uniqueDims}</span>
+              <span className="text-xs font-normal text-slate-400 font-sans">sizes</span>
             </p>
           </div>
-          <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600">
+          <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-2xs">
             <Ruler size={18} />
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs flex items-center justify-between">
+        {/* Industries - Clickable */}
+        <div
+          onClick={() => navigate('/products/industries')}
+          className="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-2xs hover:border-amber-400 hover:shadow-md transition-all cursor-pointer group flex items-center justify-between active:scale-[0.99]"
+          title="Click to view all industries and market segments"
+        >
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-              Categories
-            </p>
-            <p className="text-xl sm:text-2xl font-bold text-amber-600 mt-0.5">
-              {categoryOptions.length}
+            <div className="flex items-center gap-1.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-amber-600 transition">
+                Industries
+              </p>
+              <span className="text-[10px] text-amber-500 font-bold opacity-0 group-hover:opacity-100 transition flex items-center">
+                Explore &rarr;
+              </span>
+            </div>
+            <p className="text-xl sm:text-2xl font-bold text-amber-600 mt-0.5 flex items-center gap-2">
+              <span>{categoryOptions.length}</span>
+              <span className="text-xs font-normal text-slate-400 font-sans">sectors</span>
             </p>
           </div>
-          <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600">
+          <div className="p-2.5 rounded-xl bg-amber-50 text-amber-600 group-hover:bg-amber-600 group-hover:text-white transition-all shadow-2xs">
             <Tag size={18} />
           </div>
         </div>
@@ -879,13 +877,13 @@ export default function Products() {
 
           {/* Quick Dropdown Filters */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* Category Filter */}
+            {/* Industry Filter */}
             <select
               value={categoryFilter}
               onChange={(e) => handleFilterChange(setCategoryFilter, e.target.value)}
               className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-medium focus:bg-white focus:border-red-500 transition cursor-pointer"
             >
-              <option value="">All Categories</option>
+              <option value="">All Industries</option>
               {categoryOptions.map((c) => (
                 <option key={c} value={c}>
                   {c}
@@ -904,18 +902,43 @@ export default function Products() {
               <option value="MTR">MTR (Meter)</option>
             </select>
 
-            {/* Status Filter */}
-            <select
-              value={statusFilter}
-              onChange={(e) => handleFilterChange(setStatusFilter, e.target.value)}
-              className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 font-medium focus:bg-white focus:border-red-500 transition cursor-pointer"
-            >
-              <option value="">All Statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </select>
+            {/* Sorting Switcher Toggle */}
+            <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  setSortBy('alphabetical');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  sortBy === 'alphabetical'
+                    ? 'bg-white text-blue-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Sort alphabetically (A–Z) by product name"
+              >
+                <ArrowDownAZ size={14} className={sortBy === 'alphabetical' ? 'text-blue-600' : 'text-slate-400'} />
+                <span>A–Z</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  setSortBy('latest');
+                }}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  sortBy === 'latest'
+                    ? 'bg-white text-amber-700 shadow-2xs font-bold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Sort by latest updated or modified records first"
+              >
+                <Clock size={14} className={sortBy === 'latest' ? 'text-amber-600' : 'text-slate-400'} />
+                <span>Latest Changes</span>
+              </button>
+            </div>
 
-            {(search || categoryFilter || statusFilter || unitFilter) && (
+            {(search || categoryFilter || unitFilter || sortBy !== 'alphabetical') && (
               <Button
                 type="button"
                 variant="outline"
@@ -926,6 +949,7 @@ export default function Products() {
                   setCategoryFilter('');
                   setStatusFilter('');
                   setUnitFilter('');
+                  setSortBy('alphabetical');
                   setPage(1);
                 }}
                 className="text-red-600 hover:bg-red-50 border-red-200"
@@ -948,7 +972,7 @@ export default function Products() {
           <div className="max-w-md mx-auto space-y-1">
             <h3 className="text-base font-bold text-slate-900">No Products Found</h3>
             <p className="text-xs text-slate-500 font-normal">
-              {search || categoryFilter || statusFilter
+              {search || categoryFilter || unitFilter
                 ? 'Try adjusting your search criteria or clearing active filters.'
                 : 'No label products have been added yet.'}
             </p>
@@ -975,11 +999,10 @@ export default function Products() {
                     <th className="py-3.5 px-4.5">Dimension</th>
                     <th className="py-3.5 px-3 text-center">Unit</th>
                     <th className="py-3.5 px-4.5">Product Name</th>
-                    <th className="py-3.5 px-4">Job Name</th>
+                    <th className="py-3.5 px-4">Label Name</th>
                     <th className="py-3.5 px-4">Material & Colour</th>
                     <th className="py-3.5 px-4">Job Time</th>
-                    <th className="py-3.5 px-4">Category</th>
-                    <th className="py-3.5 px-4 text-center">Status</th>
+                    <th className="py-3.5 px-4">Industry</th>
                     <th className="py-3.5 px-4.5 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -1103,23 +1126,6 @@ export default function Products() {
                           )}
                         </td>
 
-                        {/* Status Badge */}
-                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium ${
-                              p.status === 'active'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                                : 'bg-slate-100 text-slate-600 border border-slate-200/60'
-                            }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                p.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400'
-                              }`}
-                            />
-                            <span>{p.status === 'active' ? 'Active' : 'Inactive'}</span>
-                          </span>
-                        </td>
 
                         {/* Actions */}
                         <td className="py-3.5 px-4.5 text-right whitespace-nowrap">
@@ -1209,20 +1215,6 @@ export default function Products() {
                         {p.unit || 'MM'}
                       </span>
                     </div>
-                    <span
-                      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                        p.status === 'active'
-                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/60'
-                          : 'bg-slate-100 text-slate-600 border border-slate-200/60'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          p.status === 'active' ? 'bg-emerald-500' : 'bg-slate-400'
-                        }`}
-                      />
-                      {p.status === 'active' ? 'Active' : 'Inactive'}
-                    </span>
                   </div>
 
                   {/* Product Name & Job Name */}
@@ -1497,12 +1489,12 @@ export default function Products() {
                 </div>
               )}
 
-              {/* Row 3: Job Name & Category */}
+              {/* Row 3: Label Name & Category */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <SelectOrCreate
-                  label="Job Name"
+                  label="Label Name"
                   required
-                  placeholder="Select Job Name..."
+                  placeholder="Select Label Name..."
                   value={formData.jobName}
                   onChange={(val) => setFormData({ ...formData, jobName: val })}
                   options={jobNameOptions}
@@ -1514,8 +1506,8 @@ export default function Products() {
                 />
 
                 <SelectOrCreate
-                  label="Category"
-                  placeholder="Select Category..."
+                  label="Industry"
+                  placeholder="Select Industry..."
                   value={formData.category}
                   onChange={(val) => setFormData({ ...formData, category: val })}
                   options={categoryOptions}
@@ -1523,7 +1515,7 @@ export default function Products() {
                   onEditOption={(oldVal, newVal) => handleEditOption('category', oldVal, newVal)}
                   onDeleteOption={(optVal) => handleDeleteOption('category', optVal)}
                   icon={Tag}
-                  createPrompt="Add"
+                  createPrompt="Add custom industry"
                 />
               </div>
 
@@ -1556,21 +1548,6 @@ export default function Products() {
                   icon={Palette}
                   createPrompt="Add"
                 />
-              </div>
-
-              {/* Row 5: Status (Default Usage Cycle hidden as requested) */}
-              <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-slate-700">
-                  Status
-                </label>
-                <select
-                  value={formData.status}
-                  onChange={(e) => setFormData({ ...formData, status: e.target.value })}
-                  className="w-full min-h-[42px] px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs sm:text-sm text-slate-900 font-medium focus:bg-white focus:border-red-500 transition cursor-pointer"
-                >
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </select>
               </div>
 
               {/* Modal Actions */}

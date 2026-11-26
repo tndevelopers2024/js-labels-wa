@@ -19,9 +19,13 @@ const orderSchema = new mongoose.Schema({
   amount: { type: Number, required: false, default: null },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'production', 'quality_check', 'dispatched', 'delivered', 'cancelled'],
+    enum: ['pending', 'confirmed', 'production', 'quality_check', 'dispatched', 'delivered', 'cancelled', 'lost'],
     default: 'confirmed'
   },
+  lostReason: { type: String, trim: true, default: '' },
+  lostAt: { type: Date },
+  lostBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  lostNotes: { type: String, trim: true, default: '' },
   deliveryDate: { type: Date },
   expectedReorderDate: { type: Date },
   isExpectedReorderDateOverridden: { type: Boolean, default: false },

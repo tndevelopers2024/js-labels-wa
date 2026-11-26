@@ -420,20 +420,34 @@ export async function exportProductProductionToExcel({ productName, dimensionKey
 }
 
 /**
- * Download All Orders Master Register Excel report.
+ * Download All Orders Master Register Excel report based on active filters.
  * 
  * @param {object} options
  * @param {string} [options.status='all'] - Order status filter
+ * @param {string} [options.month=''] - Month filter ('YYYY-MM' or 'all')
+ * @param {string} [options.year=''] - Year filter ('YYYY' or 'all')
  * @param {string} [options.from=''] - Start date filter
  * @param {string} [options.to=''] - End date filter
+ * @param {string} [options.search=''] - Search term
  * @param {object} [options.notify] - Notification context instance
  */
-export async function exportAllOrdersToExcel({ status = 'all', from = '', to = '', notify = null } = {}) {
+export async function exportAllOrdersToExcel({
+  status = 'all',
+  month = '',
+  year = '',
+  from = '',
+  to = '',
+  search = '',
+  notify = null
+} = {}) {
   try {
     const params = new URLSearchParams();
     if (status && status !== 'all') params.append('status', status);
+    if (month && month !== 'all') params.append('month', month);
+    if (year && year !== 'all') params.append('year', year);
     if (from) params.append('from', from);
     if (to) params.append('to', to);
+    if (search && search.trim()) params.append('search', search.trim());
 
     const qs = params.toString() ? `?${params.toString()}` : '';
     const res = await api.get(`/orders/export-all${qs}`, {
@@ -558,3 +572,340 @@ export async function exportSingleOrderToExcel(orderId, orderNo = 'Order', notif
 }
 
 
+
+
+/**
+ * Export Lost Leads Audit Register to Excel (.xlsx)
+ *
+ * @param {object} options - Filter parameters
+ * @param {object} notify - Notification toast instance
+ */
+export async function exportLostLeadsToExcel(options = {}, notify = null) {
+  try {
+    const params = new URLSearchParams();
+    if (options.search) params.append('search', options.search);
+    if (options.reason && options.reason !== 'all') params.append('reason', options.reason);
+    if (options.from) params.append('from', options.from);
+    if (options.to) params.append('to', options.to);
+    if (options.salesExecutive && options.salesExecutive !== 'all') params.append('salesExecutive', options.salesExecutive);
+    if (options.source && options.source !== 'all') params.append('source', options.source);
+    if (options.priority && options.priority !== 'all') params.append('priority', options.priority);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await api.get(`/leads/lost/export-excel${qs}`, {
+      responseType: 'blob'
+    });
+
+    let filename = `JS_Labels_Lost_Leads_${new Date().toISOString().split('T')[0]}.xlsx`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    if (notify) {
+      notify.success('Lost Leads register exported successfully!');
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to export lost leads to excel:', err);
+    let errMsg = 'Failed to export lost leads to Excel';
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json.message) errMsg = json.message;
+      } catch (e) {}
+    } else if (err.response?.data?.message) {
+      errMsg = err.response.data.message;
+    }
+    if (notify) notify.error(errMsg);
+    throw err;
+  }
+}
+
+/**
+ * Backwards compatibility alias for exportLostOrdersToExcel -> exportLostLeadsToExcel
+ */
+export const exportLostOrdersToExcel = exportLostLeadsToExcel;
+
+/**
+ * Export Monthly Reports Comprehensive Excel Workbook
+ * (Sheet 1: Summary KPIs, Sheet 2: Orders, Sheet 3: Products with Dimensions, Sheet 4: Customers)
+ *
+ * @param {object} options - Query filters (month, from, to, status, salesExecutive, etc.)
+ * @param {object} notify - Notification instance
+ */
+export async function exportMonthlyReportToExcel(options = {}, notify = null) {
+  try {
+    const params = new URLSearchParams();
+    if (options.month) params.append('month', options.month);
+    if (options.period) params.append('period', options.period);
+    if (options.from) params.append('from', options.from);
+    if (options.to) params.append('to', options.to);
+    if (options.status && options.status !== 'all') params.append('status', options.status);
+    if (options.salesExecutive && options.salesExecutive !== 'all') params.append('salesExecutive', options.salesExecutive);
+    if (options.search) params.append('search', options.search);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await api.get(`/reports/export/monthly${qs}`, {
+      responseType: 'blob'
+    });
+
+    let filename = `JS_Labels_Monthly_Report_${options.month || options.period || 'Period'}_${new Date().toISOString().split('T')[0]}.xlsx`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    if (notify) {
+      notify.success('Monthly report workbook exported successfully!');
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to export monthly report to excel:', err);
+    let errMsg = 'Failed to export monthly report to Excel';
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json.message) errMsg = json.message;
+      } catch (e) {}
+    } else if (err.response?.data?.message) {
+      errMsg = err.response.data.message;
+    }
+    if (notify) notify.error(errMsg);
+    throw err;
+  }
+}
+
+/**
+ * Export Individual Customer Complete Report
+ *
+ * @param {string} customerId - Target Customer ID
+ * @param {string} customerName - Name for filename
+ * @param {object} options - Filters (month, from, to)
+ * @param {object} notify - Notification toast
+ */
+export async function exportIndividualCustomerReportToExcel(customerId, customerName = 'Customer', options = {}, notify = null) {
+  try {
+    const params = new URLSearchParams();
+    if (options.month) params.append('month', options.month);
+    if (options.from) params.append('from', options.from);
+    if (options.to) params.append('to', options.to);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await api.get(`/reports/export/customer/${customerId}${qs}`, {
+      responseType: 'blob'
+    });
+
+    const sanitizedName = (customerName || 'Customer').replace(/[^a-zA-Z0-9_-]/g, '_');
+    let filename = `Customer_Report_${sanitizedName}_${options.month || 'AllTime'}.xlsx`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    if (notify) {
+      notify.success(`Report for "${customerName}" exported successfully!`);
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to export customer report to excel:', err);
+    let errMsg = `Failed to export customer report`;
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json.message) errMsg = json.message;
+      } catch (e) {}
+    } else if (err.response?.data?.message) {
+      errMsg = err.response.data.message;
+    }
+    if (notify) notify.error(errMsg);
+    throw err;
+  }
+}
+
+/**
+ * Export Individual Product Complete Sales & Order Report
+ *
+ * @param {string} productId - Target Product ID
+ * @param {string} productName - Name for filename
+ * @param {object} options - Filters (month, from, to)
+ * @param {object} notify - Notification toast
+ */
+export async function exportIndividualProductReportToExcel(productId, productName = 'Product', options = {}, notify = null) {
+  try {
+    const params = new URLSearchParams();
+    if (options.month) params.append('month', options.month);
+    if (options.from) params.append('from', options.from);
+    if (options.to) params.append('to', options.to);
+
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await api.get(`/reports/export/product/${productId}${qs}`, {
+      responseType: 'blob'
+    });
+
+    const sanitizedName = (productName || 'Product').replace(/[^a-zA-Z0-9_-]/g, '_');
+    let filename = `Product_Report_${sanitizedName}_${options.month || 'AllTime'}.xlsx`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    if (notify) {
+      notify.success(`Report for "${productName}" exported successfully!`);
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to export product report to excel:', err);
+    let errMsg = `Failed to export product report`;
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json.message) errMsg = json.message;
+      } catch (e) {}
+    } else if (err.response?.data?.message) {
+      errMsg = err.response.data.message;
+    }
+    if (notify) notify.error(errMsg);
+    throw err;
+  }
+}
+
+/**
+ * Export Complete Dimension Production Dossier to Excel (.xlsx)
+ *
+ * @param {object} options
+ * @param {string} options.dimensionKey - Target dimension key (e.g. 50x25 or N/A)
+ * @param {number} [options.trailingMonths=2] - Planning horizon trailing months
+ * @param {object} [options.notify] - Notification toast instance
+ */
+export async function exportDimensionProductionToExcel({ dimensionKey, trailingMonths = 2, notify = null }) {
+  if (!dimensionKey) {
+    if (notify) notify.error('Dimension key is required for export');
+    return false;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      dimensionKey,
+      trailingMonths: String(trailingMonths)
+    });
+
+    const res = await api.get(`/production/export-dimension?${params.toString()}`, {
+      responseType: 'blob'
+    });
+
+    const safeKey = dimensionKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+    let filename = `Dimension_${safeKey}_Production_Dossier.xlsx`;
+    const disposition = res.headers['content-disposition'];
+    if (disposition && disposition.indexOf('filename=') !== -1) {
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      if (filenameMatch && filenameMatch[1]) {
+        filename = filenameMatch[1];
+      }
+    }
+
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    });
+
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    if (notify) {
+      notify.success(`Dimension dossier for [${dimensionKey}] exported successfully!`);
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to export dimension production dossier to excel:', err);
+    let errMsg = `Failed to export dimension dossier for [${dimensionKey}]`;
+
+    if (err.response?.data instanceof Blob) {
+      try {
+        const text = await err.response.data.text();
+        const json = JSON.parse(text);
+        if (json.message) errMsg = json.message;
+      } catch (e) {}
+    } else if (err.response?.data?.message) {
+      errMsg = err.response.data.message;
+    }
+
+    if (notify) {
+      notify.error(errMsg);
+    }
+    throw err;
+  }
+}

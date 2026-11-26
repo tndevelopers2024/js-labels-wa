@@ -5,7 +5,7 @@ const { parseProductsFromExcelWorkbook, generateProductsExcelWorkbook } = requir
 // GET /api/products
 const getProducts = async (req, res) => {
   try {
-    const { category, status, search, unit, page, limit } = req.query;
+    const { category, status, search, unit, page, limit, sort = 'alphabetical' } = req.query;
 
     const query = { isDeleted: { $ne: true } };
 
@@ -54,7 +54,8 @@ const getProducts = async (req, res) => {
       query.$or = orConditions;
     }
 
-    const sortOption = { name: 1, createdAt: -1 };
+    const isLatest = sort === 'latest' || sort === 'recent';
+    const sortOption = isLatest ? { updatedAt: -1, createdAt: -1 } : { name: 1, createdAt: -1 };
 
     // Support pagination if requested or default
     const pageNum = parseInt(page, 10) || 1;
@@ -62,8 +63,13 @@ const getProducts = async (req, res) => {
 
     if (limitNum > 0) {
       const skip = (pageNum - 1) * limitNum;
+      let queryExec = Product.find(query);
+      if (!isLatest) {
+        queryExec = queryExec.collation({ locale: 'en', strength: 2 });
+      }
+
       const [products, total] = await Promise.all([
-        Product.find(query).sort(sortOption).skip(skip).limit(limitNum),
+        queryExec.sort(sortOption).skip(skip).limit(limitNum),
         Product.countDocuments(query)
       ]);
 
@@ -76,7 +82,11 @@ const getProducts = async (req, res) => {
     }
 
     // Unpaginated fallback if limit is 0
-    const products = await Product.find(query).sort(sortOption);
+    let unpaginatedQuery = Product.find(query);
+    if (!isLatest) {
+      unpaginatedQuery = unpaginatedQuery.collation({ locale: 'en', strength: 2 });
+    }
+    const products = await unpaginatedQuery.sort(sortOption);
     return res.json({
       products,
       total: products.length,
@@ -299,6 +309,22 @@ const createProduct = async (req, res) => {
     const dimensionKey = (parsedWidth > 0 || parsedHeight > 0)
       ? (finalUnit === 'MTR' ? `${parsedWidth}x${parsedHeight} MTR` : `${parsedWidth}x${parsedHeight}`)
       : 'N/A';
+
+    // Duplicate prevention: Check if product with identical name and dimensionKey already exists in catalog
+    const escapedName = name.trim().replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+    const existingProduct = await Product.findOne({
+      name: new RegExp(`^${escapedName}$`, 'i'),
+      dimensionKey,
+      isDeleted: { $ne: true }
+    });
+
+    if (existingProduct) {
+      return res.status(409).json({
+        message: `Product "${existingProduct.name}" (${dimensionKey}) already exists in catalog`,
+        product: existingProduct,
+        isExisting: true
+      });
+    }
 
     const product = new Product({
       name: name.trim(),
@@ -653,7 +679,7 @@ const exportProductExcel = async (req, res) => {
       ['Product Friendly Name', product.name || '—', 'Dimension Key', dimKey],
       ['Width', `${product.widthMm} ${unit}`, 'Height', `${product.heightMm} ${unit}`],
       ['Size Unit', unit, 'Category', product.category || 'General'],
-      ['Job Name', product.jobName || '—', 'Colour', product.colour || '—'],
+      ['Label Name', product.jobName || '—', 'Colour', product.colour || '—'],
       ['Material', product.material || '—', 'Status', (product.status || 'active').toUpperCase()],
       ['Default Usage Cycle', `${product.defaultUsageCycleDays || 30} Days`, 'Unit Price', product.unitPrice ? `₹${product.unitPrice}` : '—'],
       ['Total Job Time Records', `${sortedTimes.length} Logged`, 'Latest Job Time', latestTime ? `${latestTime.timeSpent} (on ${latestTime.date})` : 'None Logged'],
@@ -865,8 +891,196 @@ const exportProductExcel = async (req, res) => {
   }
 };
 
+// GET /api/products/unique-dimensions
+const getUniqueDimensions = async (req, res) => {
+  try {
+    const { search, unit, industry, sortBy = 'products_desc' } = req.query;
+
+    const matchQuery = { deleted: { $ne: true } };
+    if (unit && unit.trim() && unit !== 'all') {
+      matchQuery.unit = unit.trim().toUpperCase();
+    }
+    if (industry && industry.trim() && industry !== 'all') {
+      matchQuery.category = industry.trim();
+    }
+
+    const rawAgg = await Product.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: {
+            dimensionKey: '$dimensionKey',
+            widthMm: '$widthMm',
+            heightMm: '$heightMm',
+            unit: '$unit'
+          },
+          productCount: { $sum: 1 },
+          industries: { $addToSet: '$category' },
+          materials: { $addToSet: '$material' },
+          colours: { $addToSet: '$colour' },
+          products: {
+            $push: {
+              _id: '$_id',
+              name: '$name',
+              jobName: '$jobName',
+              category: '$category',
+              material: '$material',
+              colour: '$colour',
+              widthMm: '$widthMm',
+              heightMm: '$heightMm',
+              unit: '$unit',
+              dimensionKey: '$dimensionKey',
+              unitPrice: '$unitPrice'
+            }
+          }
+        }
+      }
+    ]);
+
+    let dimensions = rawAgg.map(item => {
+      const w = item._id.widthMm || 0;
+      const h = item._id.heightMm || 0;
+      const u = item._id.unit || 'MM';
+      const key = item._id.dimensionKey || (w && h ? `${w}x${h}` : 'N/A');
+      const display = (w > 0 || h > 0) ? `${w} × ${h} ${u}` : (key || 'N/A');
+      const area = w * h;
+
+      return {
+        dimensionKey: key,
+        widthMm: w,
+        heightMm: h,
+        unit: u,
+        displayDimension: display,
+        area,
+        productCount: item.productCount,
+        industries: (item.industries || []).filter(Boolean),
+        materials: (item.materials || []).filter(Boolean),
+        colours: (item.colours || []).filter(Boolean),
+        products: item.products || []
+      };
+    });
+
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      dimensions = dimensions.filter(d =>
+        d.dimensionKey.toLowerCase().includes(q) ||
+        d.displayDimension.toLowerCase().includes(q) ||
+        d.industries.some(i => (i || '').toLowerCase().includes(q)) ||
+        d.materials.some(m => (m || '').toLowerCase().includes(q)) ||
+        d.products.some(p => (p.name || '').toLowerCase().includes(q) || (p.jobName || '').toLowerCase().includes(q))
+      );
+    }
+
+    // Sort
+    dimensions.sort((a, b) => {
+      if (sortBy === 'products_asc') return a.productCount - b.productCount;
+      if (sortBy === 'dim_asc') return a.area - b.area;
+      if (sortBy === 'dim_desc') return b.area - a.area;
+      if (sortBy === 'name_asc') return a.displayDimension.localeCompare(b.displayDimension);
+      if (sortBy === 'name_desc') return b.displayDimension.localeCompare(a.displayDimension);
+      // Default: products_desc
+      return b.productCount - a.productCount;
+    });
+
+    const totalProducts = dimensions.reduce((sum, d) => sum + d.productCount, 0);
+
+    return res.json({
+      dimensions,
+      totalDimensions: dimensions.length,
+      totalProducts
+    });
+  } catch (error) {
+    console.error('Error fetching unique dimensions summary:', error);
+    return res.status(500).json({ message: 'Server error fetching unique dimensions' });
+  }
+};
+
+// GET /api/products/industries-summary
+const getIndustriesSummary = async (req, res) => {
+  try {
+    const { search, unit, sortBy = 'products_desc' } = req.query;
+
+    const matchQuery = { deleted: { $ne: true } };
+    if (unit && unit.trim() && unit !== 'all') {
+      matchQuery.unit = unit.trim().toUpperCase();
+    }
+
+    const rawAgg = await Product.aggregate([
+      { $match: matchQuery },
+      {
+        $group: {
+          _id: '$category',
+          productCount: { $sum: 1 },
+          uniqueDimensions: { $addToSet: '$dimensionKey' },
+          materials: { $addToSet: '$material' },
+          colours: { $addToSet: '$colour' },
+          products: {
+            $push: {
+              _id: '$_id',
+              name: '$name',
+              jobName: '$jobName',
+              category: '$category',
+              material: '$material',
+              colour: '$colour',
+              widthMm: '$widthMm',
+              heightMm: '$heightMm',
+              unit: '$unit',
+              dimensionKey: '$dimensionKey'
+            }
+          }
+        }
+      }
+    ]);
+
+    let industries = rawAgg.map(item => {
+      const indName = item._id || 'General';
+      const dims = (item.uniqueDimensions || []).filter(Boolean);
+      return {
+        industry: indName,
+        productCount: item.productCount,
+        uniqueDimensionsCount: dims.length,
+        uniqueDimensions: dims,
+        materials: (item.materials || []).filter(Boolean),
+        colours: (item.colours || []).filter(Boolean),
+        products: item.products || []
+      };
+    });
+
+    if (search && search.trim()) {
+      const q = search.toLowerCase().trim();
+      industries = industries.filter(i =>
+        i.industry.toLowerCase().includes(q) ||
+        i.uniqueDimensions.some(d => (d || '').toLowerCase().includes(q)) ||
+        i.products.some(p => (p.name || '').toLowerCase().includes(q) || (p.jobName || '').toLowerCase().includes(q))
+      );
+    }
+
+    // Sort
+    industries.sort((a, b) => {
+      if (sortBy === 'dims_desc') return b.uniqueDimensionsCount - a.uniqueDimensionsCount;
+      if (sortBy === 'name_asc') return a.industry.localeCompare(b.industry);
+      if (sortBy === 'name_desc') return b.industry.localeCompare(a.industry);
+      // Default: products_desc
+      return b.productCount - a.productCount;
+    });
+
+    const totalProducts = industries.reduce((sum, i) => sum + i.productCount, 0);
+
+    return res.json({
+      industries,
+      totalIndustries: industries.length,
+      totalProducts
+    });
+  } catch (error) {
+    console.error('Error fetching industries summary:', error);
+    return res.status(500).json({ message: 'Server error fetching industries' });
+  }
+};
+
 module.exports = {
   getProducts,
+  getUniqueDimensions,
+  getIndustriesSummary,
   getProductById,
   createProduct,
   updateProduct,

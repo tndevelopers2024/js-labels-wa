@@ -4,7 +4,8 @@ import api from '../api/axios';
 import { useNotification } from '../context/NotificationContext';
 import {
   exportAllProductionToExcel,
-  exportProductProductionToExcel
+  exportProductProductionToExcel,
+  exportDimensionProductionToExcel
 } from '../utils/exportUtils';
 import {
   Factory,
@@ -52,13 +53,16 @@ export default function Production() {
   const [forecastData, setForecastData] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
+  const [selectedDimension, setSelectedDimension] = useState('all');
   const [sortBy, setSortBy] = useState('qty'); // 'qty' | 'forecast' | 'orders' | 'name'
   const [selectedDriverMonths, setSelectedDriverMonths] = useState({}); // { [key]: 'trailing' | '2026-08' | ... }
   const [selectedDimensionProducts, setSelectedDimensionProducts] = useState({}); // { [dimensionKey]: 'all' | productName }
+  const [expandedVariants, setExpandedVariants] = useState({}); // { [dimensionKey]: boolean }
   
   // Export loading states
   const [exportingAll, setExportingAll] = useState(false);
   const [exportingProduct, setExportingProduct] = useState({}); // { [prodKey]: boolean }
+  const [exportingDimension, setExportingDimension] = useState({}); // { [dimKey]: boolean }
 
   // Modal State for viewing full product dossier
   const [modalProduct, setModalProduct] = useState(null);
@@ -217,6 +221,16 @@ export default function Production() {
     return Array.from(catSet).sort();
   }, [allSpecificProducts, forecastData]);
 
+  // Extract all unique dimensions across forecasts
+  const allDimensions = useMemo(() => {
+    if (!forecastData?.forecasts) return [];
+    const dimSet = new Set();
+    forecastData.forecasts.forEach(f => {
+      if (f.dimensionKey) dimSet.add(f.dimensionKey);
+    });
+    return Array.from(dimSet).sort();
+  }, [forecastData]);
+
   // Filter & Sort All Specific Products
   const filteredSpecificProducts = useMemo(() => {
     const q = searchTerm.toLowerCase().trim();
@@ -238,7 +252,10 @@ export default function Production() {
       const matchesCat =
         selectedCategory === 'all' || p.category === selectedCategory;
 
-      return matchesSearch && matchesCat;
+      const matchesDim =
+        selectedDimension === 'all' || p.dimensionKey === selectedDimension;
+
+      return matchesSearch && matchesCat && matchesDim;
     });
 
     list.sort((a, b) => {
@@ -265,27 +282,57 @@ export default function Production() {
     });
 
     return list;
-  }, [allSpecificProducts, searchTerm, selectedCategory, sortBy]);
+  }, [allSpecificProducts, searchTerm, selectedCategory, selectedDimension, sortBy]);
 
   // Filter Machine Dimensions view
   const filteredForecasts = useMemo(() => {
     if (!forecastData?.forecasts) return [];
-    return forecastData.forecasts.filter(f => {
+    let list = forecastData.forecasts.filter(f => {
       const q = searchTerm.toLowerCase().trim();
       const matchesSearch =
         !q ||
         f.dimensionKey.toLowerCase().includes(q) ||
         (f.productNames || []).some(p => p.toLowerCase().includes(q)) ||
         (f.topContributingCustomers || []).some(c => c.customerName.toLowerCase().includes(q) || (c.company || '').toLowerCase().includes(q)) ||
-        (f.currentMonthCustomers || []).some(c => c.customerName.toLowerCase().includes(q) || (c.company || '').toLowerCase().includes(q));
+        (f.currentMonthCustomers || []).some(c => c.customerName.toLowerCase().includes(q) || (c.company || '').toLowerCase().includes(q)) ||
+        (f.allPurchasingCustomers || []).some(c => c.customerName.toLowerCase().includes(q) || (c.company || '').toLowerCase().includes(q));
 
       const matchesCat =
         selectedCategory === 'all' ||
         (f.categories || []).includes(selectedCategory);
 
-      return matchesSearch && matchesCat;
+      const matchesDim =
+        selectedDimension === 'all' ||
+        f.dimensionKey === selectedDimension;
+
+      return matchesSearch && matchesCat && matchesDim;
     });
-  }, [forecastData, searchTerm, selectedCategory]);
+
+    list.sort((a, b) => {
+      if (sortBy === 'forecast') {
+        const fA = a.forecastRangeHigh ?? -1;
+        const fB = b.forecastRangeHigh ?? -1;
+        if (fB !== fA) return fB - fA;
+        return (b.currentMonthSoldQty || 0) - (a.currentMonthSoldQty || 0);
+      }
+      if (sortBy === 'revenue') {
+        return (b.currentMonthRevenue || 0) - (a.currentMonthRevenue || 0);
+      }
+      if (sortBy === 'orders') {
+        return (b.currentMonthOrderCount || 0) - (a.currentMonthOrderCount || 0);
+      }
+      if (sortBy === 'name') {
+        return a.dimensionKey.localeCompare(b.dimensionKey);
+      }
+      // Default: 'qty' (Volume Sold)
+      const qA = a.currentMonthSoldQty || 0;
+      const qB = b.currentMonthSoldQty || 0;
+      if (qB !== qA) return qB - qA;
+      return (b.forecastRangeHigh || 0) - (a.forecastRangeHigh || 0);
+    });
+
+    return list;
+  }, [forecastData, searchTerm, selectedCategory, selectedDimension, sortBy]);
 
   // Filter Current Month Products Sold Ledger
   const filteredCurrentMonthProducts = useMemo(() => {
@@ -302,7 +349,10 @@ export default function Production() {
       const matchesCat =
         selectedCategory === 'all' || p.category === selectedCategory;
 
-      return matchesSearch && matchesCat;
+      const matchesDim =
+        selectedDimension === 'all' || p.dimensionKey === selectedDimension;
+
+      return matchesSearch && matchesCat && matchesDim;
     });
 
     list.sort((a, b) => {
@@ -313,7 +363,7 @@ export default function Production() {
     });
 
     return list;
-  }, [forecastData, searchTerm, selectedCategory, sortBy]);
+  }, [forecastData, searchTerm, selectedCategory, selectedDimension, sortBy]);
 
   // Compute Summary Metrics
   const summaryMetrics = useMemo(() => {
@@ -392,6 +442,24 @@ export default function Production() {
       console.error('Product export failed:', err);
     } finally {
       setExportingProduct(prev => ({ ...prev, [prodKey]: false }));
+    }
+  };
+
+  // Handler: Export Specific Dimension to Excel
+  const handleExportDimension = async (d, e) => {
+    if (e) e.stopPropagation();
+    const dimKey = d.dimensionKey;
+    try {
+      setExportingDimension(prev => ({ ...prev, [dimKey]: true }));
+      await exportDimensionProductionToExcel({
+        dimensionKey: dimKey,
+        trailingMonths,
+        notify
+      });
+    } catch (err) {
+      console.error('Dimension export failed:', err);
+    } finally {
+      setExportingDimension(prev => ({ ...prev, [dimKey]: false }));
     }
   };
 
@@ -696,15 +764,29 @@ export default function Production() {
               )}
             </div>
 
-            {/* Category Dropdown */}
+            {/* Industry Dropdown */}
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
               className="h-8.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-slate-900 transition cursor-pointer shrink-0 max-w-[140px] truncate"
             >
-              <option value="all">All Categories</option>
+              <option value="all">All Industries</option>
               {allCategories.map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+
+            {/* Dimension Dropdown */}
+            <select
+              value={selectedDimension}
+              onChange={(e) => setSelectedDimension(e.target.value)}
+              className="h-8.5 px-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-700 focus:outline-none focus:border-slate-900 transition cursor-pointer shrink-0 max-w-[150px] truncate"
+            >
+              <option value="all">All Dimensions</option>
+              {allDimensions.map(dim => (
+                <option key={dim} value={dim}>
+                  [{dim}] {formatDimensionDimensions(dim)}
+                </option>
               ))}
             </select>
 
@@ -1167,244 +1249,286 @@ export default function Production() {
       {activeTab === 'machine-dimensions' && (
         <>
           {filteredForecasts.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 2xl:gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-5 2xl:gap-6">
               {filteredForecasts.map((d, index) => {
-                const selectedProdName = selectedDimensionProducts[d.dimensionKey] || 'all';
-                const isAll = selectedProdName === 'all';
-                const activeData = (!isAll && d.productBreakdowns?.[selectedProdName])
-                  ? d.productBreakdowns[selectedProdName]
-                  : d;
-
-                const trend = getTrendData(activeData.trailingMonths);
-                const isSingleValue = activeData.forecastRangeLow === activeData.forecastRangeHigh;
-                const hasForecastData = activeData.forecastRangeHigh != null && !activeData.insufficientData;
-
-                const previousMonthsSummary = (activeData.trailingMonths || [])
-                  .map(m => `${m.month.split(' ')[0]}: ${m.totalQty.toLocaleString('en-IN')}`)
-                  .join(' · ');
+                const trend = getTrendData(d.trailingMonths);
+                const hasForecastData = d.forecastRangeHigh != null && !d.insufficientData;
+                const totalLabelsCount = d.productsCount || d.productNames?.length || 0;
+                const totalBuyingCustomers = d.totalPurchasingCustomersCount || d.allPurchasingCustomers?.length || d.topContributingCustomers?.length || 0;
+                const isExportingThis = !!exportingDimension[d.dimensionKey];
+                const isVariantsExpanded = !!expandedVariants[d.dimensionKey];
+                const variantsList = d.productVariantsList || [];
 
                 return (
                   <div
                     key={d.dimensionKey}
-                    className="bg-white rounded-2xl p-4 sm:p-5 2xl:p-6 border border-slate-200/90 shadow-2xs hover:shadow-md hover:border-slate-300 transition-all duration-200 flex flex-col justify-between space-y-4 group min-w-0"
+                    className="bg-white rounded-2xl p-5 2xl:p-6 border border-slate-200/90 shadow-2xs hover:shadow-md hover:border-slate-300 transition-all duration-200 flex flex-col justify-between space-y-4 min-w-0"
                   >
                     {/* Dimension Header */}
                     <div className="space-y-2 border-b border-slate-100 pb-3 min-w-0">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-center gap-2 flex-wrap min-w-0">
-                          <span className="px-2.5 py-0.5 bg-slate-900 text-white font-mono font-bold text-xs rounded-lg shadow-2xs shrink-0">
+                        {/* Clickable Dimension Title */}
+                        <div
+                          onClick={() => navigate(`/production/dimension/${encodeURIComponent(d.dimensionKey)}`)}
+                          className="flex items-center gap-2 flex-wrap min-w-0 cursor-pointer group/title"
+                          title={`Click to view complete ${d.dimensionKey} production dossier`}
+                        >
+                          <span className="px-2.5 py-1 bg-slate-900 group-hover/title:bg-blue-600 text-white font-mono font-bold text-xs rounded-lg shadow-2xs transition shrink-0">
                             [{d.dimensionKey}]
                           </span>
-                          <h2 className="text-base sm:text-lg font-extrabold text-slate-900 tracking-tight truncate">
-                            {formatDimensionDimensions(d.dimensionKey)}
+                          <h2 className="text-base sm:text-lg font-extrabold text-slate-900 group-hover/title:text-blue-600 tracking-tight truncate transition flex items-center gap-1.5">
+                            <span>{formatDimensionDimensions(d.dimensionKey)}</span>
+                            <ChevronRight size={16} className="text-slate-400 group-hover/title:text-blue-600 group-hover/title:translate-x-0.5 transition shrink-0" />
                           </h2>
                         </div>
 
-                        <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md shrink-0">
-                          #{index + 1}
-                        </span>
-                      </div>
-
-                      {/* Product Selector Pills */}
-                      {d.productNames && d.productNames.length > 1 ? (
-                        <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Export Dimension Button */}
                           <button
-                            onClick={() => setSelectedDimensionProducts(prev => ({ ...prev, [d.dimensionKey]: 'all' }))}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
-                              isAll
-                                ? 'bg-slate-900 text-white shadow-2xs'
-                                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                            }`}
+                            onClick={(e) => handleExportDimension(d, e)}
+                            disabled={isExportingThis}
+                            title={`Download complete ${d.dimensionKey} production dossier in Excel (.xlsx)`}
+                            className="p-1.5 bg-slate-50 hover:bg-emerald-50 text-slate-600 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-lg transition cursor-pointer disabled:opacity-50 shadow-2xs"
                           >
-                            <span>All Labels</span>
-                            <span className={`px-1.5 py-0.2 text-[10px] rounded-md ${isAll ? 'bg-slate-700 text-white' : 'bg-slate-200 text-slate-700'}`}>
-                              {d.productNames.length}
-                            </span>
+                            {isExportingThis ? (
+                              <RefreshCw size={14} className="animate-spin text-emerald-600" />
+                            ) : (
+                              <Download size={14} />
+                            )}
                           </button>
 
-                          {d.productNames.map(pName => {
-                            const isSelected = selectedProdName === pName;
-                            return (
-                              <button
-                                key={pName}
-                                onClick={() => setSelectedDimensionProducts(prev => ({ ...prev, [d.dimensionKey]: pName }))}
-                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ${
-                                  isSelected
-                                    ? 'bg-blue-600 text-white shadow-2xs'
-                                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                                }`}
-                              >
-                                <span className="truncate">{pName}</span>
-                              </button>
-                            );
-                          })}
+                          <span className="text-[11px] font-bold text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md">
+                            #{index + 1}
+                          </span>
                         </div>
-                      ) : (
-                        <div className="text-xs text-slate-500 font-medium truncate pt-0.5">
-                          {d.productNames && d.productNames.length > 0
-                            ? d.productNames.join(' · ')
-                            : `${d.dimensionKey} Standard Label`}
-                        </div>
-                      )}
+                      </div>
 
-                      {/* Categories Badges */}
+                      {/* Industries tags */}
                       {d.categories && d.categories.length > 0 && (
                         <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
-                          {(!isAll && activeData.category ? [activeData.category] : d.categories).map((cat, ci) => (
+                          {d.categories.slice(0, 3).map((cat, ci) => (
                             <span key={ci} className="px-2 py-0.5 bg-slate-50 border border-slate-200 text-slate-600 text-[10px] font-semibold rounded-md shrink-0">
                               {cat}
                             </span>
                           ))}
+                          {d.categories.length > 3 && (
+                            <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded-md">
+                              +{d.categories.length - 3}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
 
-                    {/* Forecast Hero Box */}
-                    <div className="p-3.5 sm:p-4 bg-gradient-to-br from-slate-50 to-slate-100/60 rounded-xl border border-slate-200/80 space-y-1.5 min-w-0">
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-[10px] sm:text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                          {isAll ? 'Machine Demand Forecast' : `${activeData.productName} Forecast`}
+                    {/* 4 PROMINENT KEY METRIC TILES */}
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {/* Metric 1: Total Labels */}
+                      <div className="p-3 bg-purple-50/50 border border-purple-100 rounded-xl space-y-0.5">
+                        <span className="text-[10px] font-bold text-purple-700 uppercase tracking-wider block">
+                          Total Labels
                         </span>
+                        <div className="text-lg font-extrabold text-slate-900 tracking-tight">
+                          {totalLabelsCount}
+                          <span className="text-[11px] font-normal text-slate-500 ml-1">variants</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block truncate">
+                          Under this die setup
+                        </span>
+                      </div>
 
-                        {trend && (
-                          <span
-                            className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border shrink-0 ${
-                              trend.direction === 'up'
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                                : trend.direction === 'down'
-                                ? 'bg-rose-50 text-rose-700 border-rose-200'
-                                : 'bg-slate-100 text-slate-600 border-slate-200'
-                            }`}
-                          >
-                            {trend.direction === 'up' && <ArrowUpRight size={12} className="shrink-0" />}
-                            {trend.direction === 'down' && <ArrowDownRight size={12} className="shrink-0" />}
-                            {trend.direction === 'flat' && <Minus size={12} className="shrink-0" />}
-                            <span>{trend.label}</span>
+                      {/* Metric 2: Buying Customers */}
+                      <div className="p-3 bg-blue-50/50 border border-blue-100 rounded-xl space-y-0.5">
+                        <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wider block">
+                          Buying Customers
+                        </span>
+                        <div className="text-lg font-extrabold text-slate-900 tracking-tight">
+                          {totalBuyingCustomers}
+                          <span className="text-[11px] font-normal text-slate-500 ml-1">buyers</span>
+                        </div>
+                        <span className="text-[10px] text-slate-400 block truncate">
+                          Purchased dimension
+                        </span>
+                      </div>
+
+                      {/* Metric 3: Purchased This Month */}
+                      <div className="p-3 bg-emerald-50/60 border border-emerald-100 rounded-xl space-y-0.5">
+                        <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-wider block">
+                          {currentMonthTitle} Sold
+                        </span>
+                        <div className="text-lg font-extrabold text-emerald-900 tracking-tight truncate">
+                          {(d.currentMonthSoldQty || 0).toLocaleString('en-IN')}
+                          <span className="text-[11px] font-normal text-emerald-700 ml-1">units</span>
+                        </div>
+                        <span className="text-[10px] text-emerald-700 font-medium block truncate">
+                          {d.currentMonthOrderCount || 0} confirmed orders
+                        </span>
+                      </div>
+
+                      {/* Metric 4: Required Next Month */}
+                      <div className="p-3 bg-amber-50/60 border border-amber-100 rounded-xl space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-amber-800 uppercase tracking-wider block">
+                            Required Next Mo
                           </span>
-                        )}
-                      </div>
-
-                      <div className="text-xl sm:text-2xl min-[1440px]:text-3xl font-extrabold text-slate-900 tracking-tight leading-tight">
-                        {hasForecastData ? (
-                          isSingleValue ? (
-                            <>~{activeData.forecastRangeHigh.toLocaleString('en-IN')} <span className="text-sm sm:text-base font-bold text-slate-400">Labels</span></>
-                          ) : (
-                            <>{activeData.forecastRangeLow.toLocaleString('en-IN')} – {activeData.forecastRangeHigh.toLocaleString('en-IN')} <span className="text-sm sm:text-base font-bold text-slate-400">Labels</span></>
-                          )
-                        ) : (
-                          <span className="text-base sm:text-lg font-bold text-slate-400 italic">Insufficient Data</span>
-                        )}
-                      </div>
-
-                      <div className="text-xs font-semibold text-blue-700 flex items-center gap-1.5 truncate">
-                        <Calendar size={13} className="shrink-0" />
-                        <span className="truncate">Expected demand in {d.forecastForMonth}</span>
-                      </div>
-                    </div>
-
-                    {/* Current Month Actuals */}
-                    <div className="bg-emerald-50/70 border border-emerald-200/90 p-3 sm:p-3.5 rounded-xl space-y-2.5 min-w-0">
-                      <div className="flex items-center justify-between gap-1 text-[11px] font-bold text-emerald-800 uppercase tracking-wider">
-                        <span className="flex items-center gap-1.5 truncate">
-                          <PackageCheck size={14} className="text-emerald-600 shrink-0" />
-                          <span className="truncate">{d.currentMonth || currentMonthTitle} Sold</span>
-                        </span>
-                        <span className="text-emerald-700 font-extrabold shrink-0">
-                          {activeData.currentMonthSoldQty > 0 ? `${activeData.currentMonthSoldQty.toLocaleString('en-IN')} units` : '0 units'}
-                        </span>
-                      </div>
-
-                      <div className="flex items-center justify-between text-xs font-semibold text-emerald-900 pt-0.5 border-t border-emerald-100/80">
-                        <span>Orders Confirmed</span>
-                        <span>{activeData.currentMonthOrderCount || 0} Orders</span>
-                      </div>
-                    </div>
-
-                    {/* Trailing Record */}
-                    <div className="text-xs text-slate-600 bg-slate-50 p-2.5 sm:p-3 rounded-xl border border-slate-100 space-y-0.5 min-w-0">
-                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                        Previous {d.trailingMonthsCount} Months Record
-                      </div>
-                      <div className="font-semibold text-slate-800 leading-snug break-words text-xs">
-                        {previousMonthsSummary ? (
-                          <>
-                            <span>{previousMonthsSummary}</span>
-                            <span className="text-slate-400 font-normal"> — Total: </span>
-                            <span className="font-bold text-slate-900">{(activeData.sumTrailing || 0).toLocaleString('en-IN')} labels</span>
-                          </>
-                        ) : (
-                          <span className="text-slate-400 italic">No prior completed months</span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Customer Demand Drivers with Dynamic Month Selection */}
-                    {(() => {
-                      const activeDriverKey = selectedDriverMonths[d.dimensionKey] || 'trailing';
-                      const activeDriverGroup = activeData.monthlyDrivers?.[activeDriverKey] || {
-                        month: activeData.trailingPeriodLabel || d.mostRecentCompletedMonth || 'Trailing Period',
-                        totalQty: activeData.sumTrailing,
-                        drivers: activeData.topContributingCustomers || []
-                      };
-                      const driversList = activeDriverGroup.drivers || [];
-
-                      return (
-                        <div className="space-y-2 pt-0.5 min-w-0">
-                          <div className="flex items-center justify-between gap-1.5 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex-wrap">
-                            <div className="flex items-center gap-1.5 min-w-0 truncate">
-                              <Users size={12} className="text-slate-400 shrink-0" />
-                              <span className="truncate">Top Drivers</span>
-                            </div>
-
-                            <select
-                              value={activeDriverKey}
-                              onChange={(e) => {
-                                const newKey = e.target.value;
-                                setSelectedDriverMonths(prev => ({
-                                  ...prev,
-                                  [d.dimensionKey]: newKey
-                                }));
-                              }}
-                              className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200/70 border border-slate-200 text-[10px] font-semibold text-slate-700 rounded-lg focus:outline-none transition cursor-pointer max-w-[170px] truncate"
-                            >
-                              <option value="trailing">
-                                Trailing ({activeData.trailingPeriodLabel || `${d.trailingMonthsCount} Mo`})
-                              </option>
-                              {(activeData.availableMonths || []).map((m) => (
-                                <option key={m.yearMonth} value={m.yearMonth}>
-                                  {m.month} ({m.totalQty?.toLocaleString('en-IN')})
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-
-                          {driversList.length > 0 ? (
-                            <div className="space-y-1">
-                              {driversList.slice(0, 3).map((cust, ci) => (
-                                <div key={ci} className="flex items-center justify-between text-xs py-1 px-2.5 bg-slate-50 hover:bg-slate-100/80 rounded-lg transition border border-slate-100 min-w-0">
-                                  <div className="flex items-center gap-1.5 min-w-0 truncate">
-                                    <span className="text-[10px] font-bold text-slate-400 shrink-0">{ci + 1}.</span>
-                                    <span className="font-semibold text-slate-800 truncate" title={cust.customerName}>
-                                      {cust.customerName}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0 pl-2">
-                                    <span className="text-[11px] font-bold text-slate-900">{cust.percentage}%</span>
-                                    <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
-                                      ({cust.qty?.toLocaleString('en-IN')})
-                                    </span>
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="text-xs text-slate-400 italic py-1 bg-slate-50/60 rounded-lg px-2 text-center border border-dashed border-slate-200">
-                              No customer breakdown recorded for this period.
-                            </div>
+                          {trend && (
+                            <span className={`text-[9px] font-bold px-1 rounded ${trend.direction === 'up' ? 'text-emerald-700 bg-emerald-100/70' : trend.direction === 'down' ? 'text-rose-700 bg-rose-100/70' : 'text-slate-600'}`}>
+                              {trend.direction === 'up' ? `+${trend.pct}%` : trend.direction === 'down' ? `-${trend.pct}%` : '0%'}
+                            </span>
                           )}
                         </div>
-                      );
-                    })()}
+                        <div className="text-lg font-extrabold text-slate-900 tracking-tight truncate">
+                          {hasForecastData ? (
+                            <>
+                              ~{d.forecastRangeHigh.toLocaleString('en-IN')}
+                              <span className="text-[11px] font-normal text-slate-500 ml-1">labels</span>
+                            </>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium italic">Insufficient Data</span>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-amber-700 font-medium block truncate">
+                          Forecast for {forecastMonthTitle}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* STRUCTURED PRODUCT VARIANTS SECTION */}
+                    <div className="space-y-2 pt-1 border-t border-slate-100">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                        <span className="flex items-center gap-1.5">
+                          <Tag size={13} className="text-purple-500" />
+                          <span>Product Variants ({variantsList.length || d.productNames?.length || 0})</span>
+                        </span>
+                        {variantsList.length > 2 && (
+                          <button
+                            onClick={() => setExpandedVariants(prev => ({ ...prev, [d.dimensionKey]: !prev[d.dimensionKey] }))}
+                            className="text-[10px] font-bold text-blue-600 hover:text-blue-800 transition cursor-pointer"
+                          >
+                            {isVariantsExpanded ? 'Hide' : `+${variantsList.length - 2} more`}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Top Variants Preview */}
+                      <div className="space-y-1.5">
+                        {(isVariantsExpanded ? variantsList : variantsList.slice(0, 2)).map((v, vi) => (
+                          <div
+                            key={v.productName || vi}
+                            className="p-2 bg-slate-50 hover:bg-slate-100/70 rounded-xl border border-slate-100 text-xs flex items-center justify-between gap-2 transition"
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-slate-900 truncate" title={v.productName}>
+                                {v.productName}
+                              </div>
+                              <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-0.5">
+                                <span className="font-medium text-slate-700 truncate">Label: {v.labelName || '—'}</span>
+                                <span>•</span>
+                                <span className="truncate">{v.category || 'General'}</span>
+                              </div>
+                            </div>
+
+                            <div className="text-right shrink-0">
+                              <span className="text-[11px] font-extrabold text-slate-800 block">
+                                {(v.currentMonthSoldQty || 0) > 0 ? `${v.currentMonthSoldQty.toLocaleString('en-IN')} sold` : '0 sold'}
+                              </span>
+                              {v.forecastRangeHigh != null && (
+                                <span className="text-[10px] font-semibold text-blue-600 block">
+                                  ~{v.forecastRangeHigh.toLocaleString('en-IN')} req
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+
+                        {variantsList.length === 0 && d.productNames && d.productNames.length > 0 && (
+                          <div className="text-xs text-slate-600 bg-slate-50 p-2 rounded-xl border border-slate-100 truncate">
+                            {d.productNames.slice(0, 3).join(' · ')}
+                            {d.productNames.length > 3 && ` +${d.productNames.length - 3} more`}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CUSTOMER PURCHASE DETAILS SECTION */}
+                    <div className="space-y-2 pt-1 border-t border-slate-100">
+                      <div className="flex items-center justify-between text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                        <span className="flex items-center gap-1.5">
+                          <Users size={13} className="text-blue-500" />
+                          <span>Purchasing Customers ({d.allPurchasingCustomers?.length || d.topContributingCustomers?.length || 0})</span>
+                        </span>
+                        <button
+                          onClick={() => navigate(`/production/dimension/${encodeURIComponent(d.dimensionKey)}`)}
+                          className="text-[10px] font-bold text-blue-600 hover:text-blue-800 transition cursor-pointer"
+                        >
+                          View all details →
+                        </button>
+                      </div>
+
+                      {(() => {
+                        const customersPreview = (d.allPurchasingCustomers && d.allPurchasingCustomers.length > 0)
+                          ? d.allPurchasingCustomers
+                          : (d.topContributingCustomers || []);
+
+                        return customersPreview.length > 0 ? (
+                          <div className="space-y-1">
+                            {customersPreview.slice(0, 2).map((cust, ci) => (
+                              <div
+                                key={ci}
+                                className="flex items-center justify-between text-xs py-1 px-2.5 bg-slate-50 hover:bg-slate-100/70 rounded-lg transition border border-slate-100 min-w-0"
+                              >
+                                <div className="flex items-center gap-1.5 min-w-0 truncate">
+                                  <span className="text-[10px] font-bold text-slate-400 shrink-0">{ci + 1}.</span>
+                                  <span className="font-semibold text-slate-800 truncate" title={cust.customerName}>
+                                    {cust.customerName}
+                                  </span>
+                                  {cust.company && cust.company !== '—' && (
+                                    <span className="text-[10px] text-slate-400 truncate">({cust.company})</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0 pl-2">
+                                  <span className="text-[11px] font-extrabold text-blue-700">
+                                    {(cust.qty || 0).toLocaleString('en-IN')} units
+                                  </span>
+                                  {cust.percentage != null && (
+                                    <span className="text-[10px] font-bold text-slate-500">
+                                      ({cust.percentage}%)
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-slate-400 italic py-1.5 bg-slate-50/60 rounded-xl px-2.5 text-center border border-dashed border-slate-200">
+                            No recorded customer purchases yet.
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* CARD FOOTER ACTIONS */}
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => navigate(`/production/dimension/${encodeURIComponent(d.dimensionKey)}`)}
+                        className="flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 bg-blue-50/70 hover:bg-blue-100/70 px-3 py-1.5 rounded-xl transition cursor-pointer"
+                      >
+                        <span>Open Dimension Details</span>
+                        <ChevronRight size={14} />
+                      </button>
+
+                      <button
+                        onClick={(e) => handleExportDimension(d, e)}
+                        disabled={isExportingThis}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-emerald-50 text-slate-700 hover:text-emerald-700 border border-slate-200 hover:border-emerald-200 rounded-xl transition cursor-pointer disabled:opacity-50"
+                      >
+                        {isExportingThis ? (
+                          <RefreshCw size={13} className="animate-spin text-emerald-600" />
+                        ) : (
+                          <FileSpreadsheet size={13} />
+                        )}
+                        <span>Export (.xlsx)</span>
+                      </button>
+                    </div>
 
                   </div>
                 );
@@ -1417,6 +1541,18 @@ export default function Production() {
               <p className="text-xs text-slate-500 max-w-md mx-auto">
                 No machine setup dimensions match the selected filters.
               </p>
+              {(searchTerm || selectedCategory !== 'all' || selectedDimension !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSearchTerm('');
+                    setSelectedCategory('all');
+                    setSelectedDimension('all');
+                  }}
+                  className="px-4 py-2 bg-slate-900 text-white text-xs font-semibold rounded-xl shadow-2xs hover:bg-slate-800 transition cursor-pointer"
+                >
+                  Clear Filters
+                </button>
+              )}
             </div>
           )}
         </>

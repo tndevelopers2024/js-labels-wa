@@ -272,7 +272,7 @@ export default function ProductDetailsModal({
             </div>
             <div className="space-y-0.5">
               <span className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
-                <Briefcase size={11} /> Job Name
+                <Tag size={11} /> Label Name
               </span>
               <p className="font-semibold text-slate-900 truncate">
                 {product.jobName || '—'}
@@ -296,7 +296,7 @@ export default function ProductDetailsModal({
             </div>
             <div className="space-y-0.5">
               <span className="text-[10px] uppercase font-semibold text-slate-400 flex items-center gap-1">
-                <Tag size={11} /> Category
+                <Tag size={11} /> Industry
               </span>
               <p className="font-semibold text-slate-900 truncate">
                 {product.category || '—'}

@@ -53,7 +53,7 @@ function parseProductsFromExcelWorkbook(workbook) {
       if ((text.includes('unit') || text.includes('uom') || text.includes('sizeunit')) && !candidateMap.unit) {
         candidateMap.unit = colNumber;
       }
-      if ((text.includes('job') || text.includes('jobname') || text.includes('customercode')) && !candidateMap.jobName) {
+      if ((text.includes('job') || text.includes('jobname') || text.includes('labelname') || (text.includes('label') && !text.includes('friendly')) || text.includes('customercode')) && !candidateMap.jobName) {
         candidateMap.jobName = colNumber;
       }
       if ((text.includes('category') || text === 'cat') && !candidateMap.category) {
@@ -266,7 +266,7 @@ function generateProductsExcelWorkbook(products, { title = 'JS LABELS — PRODUC
     'Height (mm)',
     'Size Unit',
     'Dimension Key',
-    'Job Name',
+    'Label Name',
     'Category',
     'Material',
     'Colour',
