@@ -37,6 +37,7 @@ const NAV_ITEMS = [
   },
   {
     key: 'lost-leads',
+    permission: 'leads',
     label: 'Lost Leads',
     path: '/leads/lost',
     icon: <UserX size={20} />

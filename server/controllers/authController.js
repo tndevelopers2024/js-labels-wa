@@ -2,6 +2,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const permissions = require('../config/permissions');
+const { getPermissionsForRole } = require('../utils/permissionsHelper');
 
 const generateToken = (id, role) => {
   return jwt.sign({ id, role }, process.env.JWT_SECRET || 'fallback_secret', {
@@ -45,7 +46,7 @@ const login = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000
     });
 
-    const userPermissions = permissions[user.role] || {};
+    const userPermissions = await getPermissionsForRole(user.role);
 
     return res.json({
       token,
@@ -116,7 +117,7 @@ const register = async (req, res) => {
 
 const me = async (req, res) => {
   try {
-    const userPermissions = permissions[req.user.role] || {};
+    const userPermissions = await getPermissionsForRole(req.user.role);
     return res.json({
       user: req.user,
       role: req.user.role,

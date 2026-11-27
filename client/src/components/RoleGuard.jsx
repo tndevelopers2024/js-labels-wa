@@ -16,9 +16,14 @@ export default function RoleGuard({ module, children }) {
   const hasViewAccess = permissions[module]?.includes('view');
 
   if (!hasViewAccess) {
+    const firstAllowedModule = Object.keys(permissions || {}).find(m => permissions[m]?.includes('view') && m !== module);
+    const redirectPath = permissions.dashboard?.includes('view')
+      ? '/dashboard'
+      : (firstAllowedModule ? `/${firstAllowedModule}` : '/login');
+
     return (
       <Navigate
-        to="/dashboard"
+        to={redirectPath}
         state={{ deniedMessage: "You don't have access to this page" }}
         replace
       />

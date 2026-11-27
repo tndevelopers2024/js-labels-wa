@@ -17,6 +17,10 @@ const settingsSchema = new mongoose.Schema({
     enum: ['round_robin', 'load_based'],
     default: 'round_robin'
   },
+  rolePermissions: {
+    type: mongoose.Schema.Types.Mixed,
+    default: null
+  },
   singleton: { type: Boolean, default: true }
 }, {
   timestamps: true
