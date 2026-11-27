@@ -242,7 +242,7 @@ function SearchableProductSelect({ products, selectedProductId, onSelectProduct,
               className="w-full py-2 px-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 transition cursor-pointer"
             >
               <Plus size={13} className="text-red-600" />
-              <span>+ Create New Product {searchTerm ? `"${searchTerm}"` : ''}</span>
+              <span>Create New Product {searchTerm ? `"${searchTerm}"` : ''}</span>
             </button>
           </div>
         </div>
@@ -561,39 +561,22 @@ function InlineNewProductForm({ prefillName, onProductCreated, onCancel, product
           </div>
         </div>
 
-        {/* Row 5: Unit Price & Reorder Cycle */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Catalog Unit Price (₹) <span className="text-slate-400 font-normal">(Optional)</span>
-            </label>
-            <input
-              type="number"
-              step="any"
-              min="0"
-              value={form.unitPrice}
-              onChange={(e) => setForm({ ...form, unitPrice: e.target.value })}
-              placeholder="e.g. 1.25"
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-mono font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500"
-            />
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold text-slate-700 mb-1">
-              Default Usage Cycle (Days)
-            </label>
-            <select
-              value={form.defaultUsageCycleDays}
-              onChange={(e) => setForm({ ...form, defaultUsageCycleDays: e.target.value })}
-              className="w-full px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 cursor-pointer"
-            >
-              <option value="15">15 Days (Rapid cycle)</option>
-              <option value="30">30 Days (Standard monthly)</option>
-              <option value="45">45 Days (Extended)</option>
-              <option value="60">60 Days (Bi-monthly)</option>
-              <option value="90">90 Days (Quarterly)</option>
-            </select>
-          </div>
+        {/* Row 5: Reorder Cycle */}
+        <div>
+          <label className="block text-[11px] font-bold text-slate-700 mb-1">
+            Default Usage Cycle (Days)
+          </label>
+          <select
+            value={form.defaultUsageCycleDays}
+            onChange={(e) => setForm({ ...form, defaultUsageCycleDays: e.target.value })}
+            className="w-full sm:w-1/2 px-3 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 cursor-pointer"
+          >
+            <option value="15">15 Days (Rapid cycle)</option>
+            <option value="30">30 Days (Standard monthly)</option>
+            <option value="45">45 Days (Extended)</option>
+            <option value="60">60 Days (Bi-monthly)</option>
+            <option value="90">90 Days (Quarterly)</option>
+          </select>
         </div>
       </div>
 
@@ -1117,7 +1100,7 @@ export default function NewOrderModal({ isOpen, onClose, onSuccess, initialLead,
                 className="text-xs font-bold text-red-600 hover:text-red-700 flex items-center gap-1 cursor-pointer"
               >
                 <Plus size={14} />
-                <span>+ Add Item</span>
+                <span>Add Item</span>
               </button>
             </div>
 
@@ -1158,7 +1141,7 @@ export default function NewOrderModal({ isOpen, onClose, onSuccess, initialLead,
                             }`}
                           >
                             <Plus size={11} />
-                            <span>+ Create New Product</span>
+                            <span>Create New Product</span>
                           </button>
                         </div>
                       </div>

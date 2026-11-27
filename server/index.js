@@ -90,6 +90,13 @@ app.use('/api/trash', trashRoutes);
 app.use('/api/search', searchRoutes);
 app.use('/api/production', productionRoutes);
 
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNHANDLED REJECTION]', reason);
+});
+
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
