@@ -69,6 +69,15 @@ const login = async (req, res) => {
 
 const register = async (req, res) => {
   try {
+    // Check if any users already exist in the system
+    const userCount = await User.countDocuments();
+    if (userCount > 0) {
+      // If users already exist, only authenticated super_admin can register new accounts
+      if (!req.user || req.user.role !== 'super_admin') {
+        return res.status(403).json({ message: 'Public registration is disabled. Only Super Admin can register users.' });
+      }
+    }
+
     const { name, email, phone, role, password } = req.body;
 
     if (!name || !email || !role || !password) {

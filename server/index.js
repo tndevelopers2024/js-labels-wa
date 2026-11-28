@@ -2,8 +2,11 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
 const connectDB = require('./config/db');
+const { sanitizeMiddleware } = require('./middleware/sanitize');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -25,6 +28,7 @@ const productionRoutes = require('./routes/productionRoutes');
 const { initReorderReminderJob } = require('./jobs/reorderReminderJob');
 
 const app = express();
+app.disable('x-powered-by');
 
 // Connect to MongoDB
 connectDB().then(() => {
@@ -40,6 +44,11 @@ connectDB().then(() => {
 
 // Initialize Cron Jobs
 initReorderReminderJob();
+
+// Security HTTP Headers
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
 
 // CORS configuration for production & local development
 const allowedOrigins = [
@@ -58,13 +67,22 @@ app.use(cors({
     if (allowedOrigins.includes(origin) || origin.endsWith('.vercel.app')) {
       return callback(null, true);
     }
-    return callback(null, true);
+    // Allow localhost during development
+    if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:')) {
+      return callback(null, true);
+    }
+    return callback(new Error('Blocked by CORS policy'));
   },
   credentials: true
 }));
 
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
+app.use(sanitizeMiddleware);
+
+// Apply rate limiter to API routes
+app.use('/api', apiLimiter);
 
 // Static uploads folder
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
